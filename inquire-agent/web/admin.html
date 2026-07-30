@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>管理员 — 智能询价</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Microsoft YaHei', sans-serif; background: #f0f2f5; color: #1d2b3a; }
+.layout { display: flex; min-height: 100vh; }
+/* 侧边栏 */
+.sidebar {
+  width: 220px; background: #1e293b; color: #e2e8f0;
+  padding: 20px 0; position: fixed; top: 0; left: 0; bottom: 0; overflow-y: auto;
+}
+.sidebar-header {
+  padding: 0 20px 20px; border-bottom: 1px solid #334155; margin-bottom: 12px;
+}
+.sidebar-header h1 { font-size: 18px; color: #fff; }
+.sidebar-header .sub { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px; padding: 12px 20px;
+  color: #cbd5e0; text-decoration: none; font-size: 14px; cursor: pointer;
+  border-left: 3px solid transparent; transition: all .15s;
+}
+.nav-item:hover { background: #334155; color: #fff; }
+.nav-item.active { background: #334155; color: #fff; border-left-color: #667eea; }
+.nav-item .icon { font-size: 16px; }
+.nav-section-title {
+  padding: 16px 20px 6px; font-size: 11px; color: #64748b;
+  text-transform: uppercase; letter-spacing: 1px;
+}
+.nav-item.disabled { opacity: .4; cursor: not-allowed; }
+.nav-item.disabled:hover { background: transparent; color: #cbd5e0; }
+/* 主内容区 */
+.main { margin-left: 220px; flex: 1; padding: 0; }
+.topbar {
+  background: #fff; padding: 12px 24px; border-bottom: 1px solid #e2e8f0;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.topbar .title { font-size: 16px; font-weight: bold; }
+.topbar a { color: #667eea; text-decoration: none; font-size: 13px; }
+.content { padding: 0; }
+.content iframe { width: 100%; height: calc(100vh - 53px); border: none; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <!-- 侧边栏 -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <h1>⚙️ 管理员</h1>
+      <div class="sub">智能询价 v5.0</div>
+    </div>
+    <div class="nav-section-title">系统配置</div>
+    <div class="nav-item active" data-page="config" data-title="模型配置">
+      <span class="icon">🤖</span> 模型配置
+    </div>
+    <div class="nav-item disabled" data-title="供应商管理">
+      <span class="icon">🏢</span> 供应商管理
+    </div>
+    <div class="nav-item disabled" data-title="价格趋势">
+      <span class="icon">📈</span> 价格趋势
+    </div>
+    <div class="nav-section-title">数据</div>
+    <div class="nav-item disabled" data-title="询价记录">
+      <span class="icon">📋</span> 询价记录
+    </div>
+    <div class="nav-item disabled" data-title="数据库维护">
+      <span class="icon">💾</span> 数据库维护
+    </div>
+    <div class="nav-section-title">其他</div>
+    <div class="nav-item disabled" data-title="系统信息">
+      <span class="icon">ℹ️</span> 系统信息
+    </div>
+  </div>
+
+  <!-- 主内容 -->
+  <div class="main">
+    <div class="topbar">
+      <div class="title" id="pageTitle">模型配置</div>
+      <a href="/">← 返回询价</a>
+    </div>
+    <div class="content">
+      <iframe id="contentFrame" src="/config.html"></iframe>
+    </div>
+  </div>
+</div>
+
+<script>
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', function() {
+    if (this.classList.contains('disabled')) return;
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    this.classList.add('active');
+    const page = this.dataset.page;
+    const title = this.dataset.title;
+    document.getElementById('pageTitle').textContent = title;
+    if (page) {
+      document.getElementById('contentFrame').src = '/' + page + '.html';
+    }
+  });
+});
+</script>
+</body>
+</html>

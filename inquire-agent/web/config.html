@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>模型配置 — 智能询价</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Microsoft YaHei', sans-serif; background: #f0f2f5; color: #1d2b3a; padding: 20px; }
+.container { max-width: 100%; margin: 0; }
+.header {
+  background: linear-gradient(135deg, #667eea, #764ba2); color: #fff;
+  padding: 20px 28px; border-radius: 12px; margin-bottom: 20px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.header h1 { font-size: 20px; }
+.header a { color: #fff; text-decoration: none; font-size: 13px; opacity: .9; }
+.card { background: #fff; border-radius: 10px; padding: 24px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+.card-title { font-size: 15px; font-weight: bold; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+.card-title .tag {
+  font-size: 11px; padding: 2px 8px; border-radius: 10px;
+  background: #e2e8f0; color: #667; font-weight: normal;
+}
+.card-title .tag.free { background: #d4edda; color: #155724; }
+.card-title .tag.paid { background: #fff3cd; color: #856404; }
+.form-row { margin-bottom: 14px; }
+.form-row label { display: block; font-size: 13px; color: #555; margin-bottom: 4px; font-weight: 500; }
+.form-row input {
+  width: 100%; padding: 8px 12px; border: 1px solid #cbd5e0; border-radius: 6px;
+  font-size: 14px; font-family: 'Consolas', monospace;
+}
+.form-row input:focus { outline: none; border-color: #667eea; box-shadow: 0 0 0 3px rgba(102,126,234,.1); }
+.form-row .hint { font-size: 11px; color: #999; margin-top: 3px; }
+.form-inline { display: flex; gap: 12px; }
+.form-inline .form-row { flex: 1; }
+.actions { display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+.btn {
+  background: #667eea; color: #fff; border: none; padding: 8px 20px;
+  border-radius: 6px; font-size: 13px; cursor: pointer; transition: all .2s;
+}
+.btn:hover { background: #5568d3; }
+.btn-secondary { background: #fff; color: #667eea; border: 1px solid #667eea; }
+.btn-success { background: #28a745; }
+.btn-success:hover { background: #218838; }
+.btn-test { background: #17a2b8; }
+.btn-test:hover { background: #138496; }
+.status-badge {
+  display: inline-block; padding: 2px 10px; border-radius: 10px;
+  font-size: 11px; margin-left: 8px;
+}
+.status-badge.ok { background: #d4edda; color: #155724; }
+.status-badge.no { background: #f8d7da; color: #721c24; }
+.result-msg {
+  margin-top: 8px; padding: 8px 12px; border-radius: 6px; font-size: 13px; display: none;
+}
+.result-msg.ok { background: #d4edda; color: #155724; display: block; }
+.result-msg.err { background: #f8d7da; color: #721c24; display: block; }
+</style>
+</head>
+<body>
+<div class="container">
+  <!-- 主力模型 -->
+  <div class="card">
+    <div class="card-title">
+      主力模型（Agnes 2.0 Flash）
+      <span class="tag free">免费</span>
+      <span id="primaryStatus"></span>
+    </div>
+    <div class="form-row">
+      <label>API Key</label>
+      <input id="primary_api_key" type="text" placeholder="sk-...">
+      <div class="hint">Agnes AI 平台的 API Key，免费申请</div>
+    </div>
+    <div class="form-inline">
+      <div class="form-row">
+        <label>Base URL</label>
+        <input id="primary_base_url" type="text" placeholder="https://apihub.agnes-ai.com/v1">
+      </div>
+      <div class="form-row">
+        <label>模型名</label>
+        <input id="primary_model" type="text" placeholder="agnes-2.0-flash">
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-test" onclick="testConn('primary')">🔗 测试连通</button>
+      <button class="btn btn-success" onclick="saveSection('primary')">💾 保存</button>
+    </div>
+    <div id="primaryMsg" class="result-msg"></div>
+  </div>
+
+  <!-- 备用模型 -->
+  <div class="card">
+    <div class="card-title">
+      备用模型（DeepSeek）
+      <span class="tag paid">付费 · 含联网搜索</span>
+      <span id="fallbackStatus"></span>
+    </div>
+    <div class="form-row">
+      <label>API Key</label>
+      <input id="fallback_api_key" type="text" placeholder="sk-...">
+      <div class="hint">DeepSeek 平台的 API Key，付费，支持联网搜索</div>
+    </div>
+    <div class="form-inline">
+      <div class="form-row">
+        <label>Base URL</label>
+        <input id="fallback_base_url" type="text" placeholder="https://api.deepseek.com/v1">
+      </div>
+      <div class="form-row">
+        <label>模型名</label>
+        <input id="fallback_model" type="text" placeholder="deepseek-chat">
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-test" onclick="testConn('fallback')">🔗 测试连通</button>
+      <button class="btn btn-success" onclick="saveSection('fallback')">💾 保存</button>
+    </div>
+    <div id="fallbackMsg" class="result-msg"></div>
+  </div>
+
+  <!-- 通用参数 -->
+  <div class="card">
+    <div class="card-title">通用参数</div>
+    <div class="form-inline">
+      <div class="form-row">
+        <label>Temperature（创造性 0-1）</label>
+        <input id="temperature" type="number" step="0.1" min="0" max="1" placeholder="0.1">
+      </div>
+      <div class="form-row">
+        <label>Max Tokens（最大输出长度）</label>
+        <input id="max_tokens" type="number" step="100" min="100" placeholder="2000">
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-success" onclick="saveParams()">💾 保存参数</button>
+    </div>
+    <div id="paramsMsg" class="result-msg"></div>
+  </div>
+</div>
+
+<script>
+// 全局错误捕获
+window.addEventListener('error', function(e) {
+  console.error('JS错误:', e.message, e.filename, e.lineno);
+  alert('JS错误: ' + e.message + '\n行号: ' + e.lineno);
+});
+window.addEventListener('unhandledrejection', function(e) {
+  console.error('Promise错误:', e.reason);
+});
+
+async function loadConfig() {
+  try {
+    const res = await fetch('/api/llm-config');
+    const data = await res.json();
+    if (data.error) { alert('加载配置失败: ' + data.error); return; }
+    // 主力
+    document.getElementById('primary_api_key').value = data.primary.api_key || '';
+    document.getElementById('primary_api_key').placeholder = data.primary.has_api_key ? '已配置（输入新值覆盖）' : 'sk-...';
+    document.getElementById('primary_base_url').value = data.primary.base_url || '';
+    document.getElementById('primary_model').value = data.primary.model || '';
+    document.getElementById('primaryStatus').innerHTML = data.primary.has_api_key
+      ? '<span class="status-badge ok">✓ 已配置</span>' : '<span class="status-badge no">未配置</span>';
+    // 备用
+    document.getElementById('fallback_api_key').value = data.fallback.api_key || '';
+    document.getElementById('fallback_api_key').placeholder = data.fallback.has_api_key ? '已配置（输入新值覆盖）' : 'sk-...';
+    document.getElementById('fallback_base_url').value = data.fallback.base_url || '';
+    document.getElementById('fallback_model').value = data.fallback.model || '';
+    document.getElementById('fallbackStatus').innerHTML = data.fallback.has_api_key
+      ? '<span class="status-badge ok">✓ 已配置</span>' : '<span class="status-badge no">未配置</span>';
+    // 参数
+    document.getElementById('temperature').value = data.temperature || 0.1;
+    document.getElementById('max_tokens').value = data.max_tokens || 2000;
+  } catch (e) {
+    alert('loadConfig异常: ' + e.message);
+  }
+}
+
+function buildPayload(type) {
+  const payload = { type };
+  const apiKey = document.getElementById(`${type}_api_key`).value.trim();
+  const baseUrl = document.getElementById(`${type}_base_url`).value.trim();
+  const model = document.getElementById(`${type}_model`).value.trim();
+  // 包含 * 的是脱敏值，不发送（后端会跳过，前端也不发）
+  if (apiKey && !apiKey.includes('*')) payload.api_key = apiKey;
+  if (baseUrl) payload.base_url = baseUrl;
+  if (model) payload.model = model;
+  return payload;
+}
+
+async function saveSection(type) {
+  const payload = buildPayload(type);
+  const body = {};
+  if (payload.api_key) body[`${type}_api_key`] = payload.api_key;
+  if (payload.base_url) body[`${type}_base_url`] = payload.base_url;
+  if (payload.model) body[`${type}_model`] = payload.model;
+  const res = await fetch('/api/llm-config', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  showMsg(`${type}Msg`, data.success ? 'ok' : 'err', data.message || data.error);
+  if (data.success) setTimeout(loadConfig, 500);
+}
+
+async function testConn(type) {
+  const msgEl = document.getElementById(`${type}Msg`);
+  const btn = document.querySelector(`button[onclick="testConn('${type}')"]`);
+  const oldText = btn ? btn.textContent : '';
+  if (btn) { btn.textContent = '⏳ 测试中...'; btn.disabled = true; }
+  showMsg(`${type}Msg`, '', '正在测试连通性...');
+  try {
+    const payload = buildPayload(type);
+    const res = await fetch('/api/llm-config/test', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (data.success) {
+      showMsg(`${type}Msg`, 'ok', `✅ 连通成功（${data.latency_ms}ms）响应：${data.response}`);
+    } else {
+      showMsg(`${type}Msg`, 'err', `❌ ${data.error}`);
+    }
+  } catch (e) {
+    showMsg(`${type}Msg`, 'err', `❌ 请求异常: ${e.message}`);
+  } finally {
+    if (btn) { btn.textContent = oldText; btn.disabled = false; }
+  }
+}
+
+async function saveParams() {
+  const body = {
+    temperature: document.getElementById('temperature').value,
+    max_tokens: document.getElementById('max_tokens').value,
+  };
+  const res = await fetch('/api/llm-config', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  showMsg('paramsMsg', data.success ? 'ok' : 'err', data.message || data.error);
+}
+
+function showMsg(id, type, msg) {
+  const el = document.getElementById(id);
+  if (!el) { console.error('showMsg: 元素不存在', id); return; }
+  el.className = type ? `result-msg ${type}` : 'result-msg';
+  el.style.display = 'block';
+  el.textContent = msg;
+}
+
+loadConfig();
+</script>
+</body>
+</html>

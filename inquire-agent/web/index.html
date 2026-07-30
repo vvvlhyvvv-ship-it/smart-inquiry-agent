@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智能询价 Agent v5.0</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Microsoft YaHei', -apple-system, sans-serif;
+  background: #f0f2f5; color: #1d2b3a; min-height: 100vh; padding: 20px;
+}
+.container { max-width: 1100px; margin: 0 auto; }
+.header {
+  background: linear-gradient(135deg, #667eea, #764ba2); color: #fff;
+  padding: 24px 32px; border-radius: 12px; margin-bottom: 20px;
+  box-shadow: 0 4px 20px rgba(102,126,234,.3);
+}
+.header h1 { font-size: 24px; margin-bottom: 6px; }
+.header .subtitle { font-size: 13px; opacity: .9; }
+.header .badge {
+  display: inline-block; background: rgba(255,255,255,.2); padding: 2px 10px;
+  border-radius: 10px; font-size: 12px; margin-left: 8px;
+}
+.card {
+  background: #fff; border-radius: 10px; padding: 24px; margin-bottom: 16px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.06);
+}
+.card-title {
+  font-size: 16px; font-weight: bold; margin-bottom: 16px;
+  display: flex; align-items: center; gap: 8px;
+}
+.card-title .num {
+  background: #667eea; color: #fff; width: 24px; height: 24px;
+  border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+}
+.step { display: none; }
+.step.active { display: block; }
+
+.upload-zone {
+  border: 2px dashed #cbd5e0; border-radius: 10px; padding: 40px;
+  text-align: center; cursor: pointer; transition: all .2s;
+}
+.upload-zone:hover, .upload-zone.dragover {
+  border-color: #667eea; background: #f8f9ff;
+}
+.upload-zone .icon { font-size: 48px; margin-bottom: 12px; }
+.upload-zone .text { color: #667; font-size: 14px; }
+.upload-zone .file-info { margin-top: 12px; color: #333; font-weight: bold; }
+.btn {
+  background: #667eea; color: #fff; border: none; padding: 10px 24px;
+  border-radius: 6px; font-size: 14px; cursor: pointer; transition: all .2s;
+}
+.btn:hover { background: #5568d3; }
+.btn:disabled { background: #cbd5e0; cursor: not-allowed; }
+.btn-secondary { background: #fff; color: #667eea; border: 1px solid #667eea; }
+.btn-secondary:hover { background: #f8f9ff; }
+.btn-success { background: #28a745; }
+.btn-success:hover { background: #218838; }
+.btn-warning { background: #ffc107; color: #333; }
+.actions { display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+
+.mapping-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+.mapping-table th, .mapping-table td {
+  border: 1px solid #e2e8f0; padding: 8px 12px; text-align: left; font-size: 13px;
+}
+.mapping-table th { background: #f7fafc; font-weight: 600; }
+.mapping-table select {
+  padding: 4px 8px; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 13px;
+}
+.preview-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+.preview-table th, .preview-table td {
+  border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left;
+}
+.preview-table th { background: #f7fafc; }
+
+.switch-row {
+  display: flex; align-items: center; gap: 10px; margin: 16px 0;
+  padding: 12px; background: #f7fafc; border-radius: 6px;
+}
+.switch { position: relative; width: 44px; height: 24px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+  background: #cbd5e0; border-radius: 24px; transition: .3s;
+}
+.slider:before {
+  content: ""; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px;
+  background: #fff; border-radius: 50%; transition: .3s;
+}
+input:checked + .slider { background: #667eea; }
+input:checked + .slider:before { transform: translateX(20px); }
+.switch-label { font-size: 14px; }
+.switch-hint { font-size: 12px; color: #888; }
+
+.progress-bar {
+  background: #e2e8f0; border-radius: 10px; height: 24px; overflow: hidden;
+  margin: 12px 0; position: relative;
+}
+.progress-fill {
+  background: linear-gradient(90deg, #667eea, #764ba2); height: 100%;
+  transition: width .3s; display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 12px; font-weight: bold;
+}
+.log-box {
+  background: #1e293b; color: #e2e8f0; border-radius: 8px; padding: 12px;
+  font-family: 'Consolas', monospace; font-size: 12px; max-height: 300px;
+  overflow-y: auto; margin-top: 12px;
+}
+.log-line { padding: 2px 0; }
+.log-line .time { color: #94a3b8; margin-right: 8px; }
+.log-line.done { color: #4ade80; }
+.log-line.warn { color: #fbbf24; }
+.log-line.err { color: #f87171; }
+
+.stats-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px; margin: 16px 0;
+}
+.stat-card { background: #f7fafc; border-radius: 8px; padding: 16px; text-align: center; }
+.stat-card .value { font-size: 28px; font-weight: bold; color: #667eea; }
+.stat-card .label { font-size: 12px; color: #667; margin-top: 4px; }
+.stat-card.high .value { color: #28a745; }
+.stat-card.medium .value { color: #ffc107; }
+.stat-card.low .value { color: #dc3545; }
+
+.verify-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+.verify-table th, .verify-table td {
+  border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left;
+}
+.verify-table th { background: #f7fafc; }
+.verify-table input {
+  width: 100%; padding: 4px 6px; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 13px;
+}
+.alert { padding: 12px 16px; border-radius: 6px; margin: 12px 0; font-size: 13px; }
+.alert-warning { background: #fff3cd; color: #856404; border: 1px solid #ffeaa7; }
+.alert-info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+
+.hidden { display: none !important; }
+.step-nav { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+.step-nav-item { padding: 6px 14px; border-radius: 20px; font-size: 13px; background: #e2e8f0; color: #667; }
+.step-nav-item.active { background: #667eea; color: #fff; }
+.step-nav-item.done { background: #28a745; color: #fff; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>智能询价 Agent <span class="badge">v5.0</span></h1>
+    <div class="subtitle">AI知识推理 + 联网搜索 · 造价工程师的AI询价决策助手 · <a href="/admin.html" style="color:#fff;text-decoration:underline;">⚙️ 管理员</a></div>
+  </div>
+
+  <div class="step-nav">
+    <div class="step-nav-item active" id="nav-1">① 上传清单</div>
+    <div class="step-nav-item" id="nav-2">② 列映射</div>
+    <div class="step-nav-item" id="nav-3">③ AI询价</div>
+    <div class="step-nav-item" id="nav-4">④ 结果与核实</div>
+  </div>
+
+  <!-- Step 1: 上传 -->
+  <div class="card step active" id="step-1">
+    <div class="card-title"><span class="num">1</span>上传材料清单</div>
+    <div class="upload-zone" id="uploadZone">
+      <div class="icon">📁</div>
+      <div class="text">点击或拖拽 Excel 文件到此处</div>
+      <div class="file-info" id="fileInfo"></div>
+    </div>
+    <input type="file" id="fileInput" accept=".xlsx,.xls" class="hidden">
+    <div class="actions">
+      <button class="btn-secondary btn" onclick="downloadTemplate()">📋 下载模板</button>
+      <button class="btn" id="btnToMapping" disabled onclick="goStep(2)">下一步：列映射 →</button>
+    </div>
+  </div>
+
+  <!-- Step 2: 列映射 -->
+  <div class="card step" id="step-2">
+    <div class="card-title"><span class="num">2</span>确认列映射</div>
+    <div id="mappingContainer"></div>
+    <div class="switch-row">
+      <div class="switch-label" style="min-width:140px;">每项材料询价供应商数</div>
+      <select id="supplierCount" style="padding:4px 8px;border:1px solid #cbd5e0;border-radius:4px;font-size:14px;">
+        <option value="3">3 家（推荐）</option>
+        <option value="5">5 家</option>
+        <option value="1">1 家（快速）</option>
+        <option value="10">10 家（详细）</option>
+      </select>
+      <div class="switch-hint">每项材料返回的供应商报价数量</div>
+    </div>
+    <div class="switch-row">
+      <label class="switch">
+        <input type="checkbox" id="webSearchSwitch" checked>
+        <span class="slider"></span>
+      </label>
+      <div>
+        <div class="switch-label">含联网实时价（DeepSeek 联网搜索）</div>
+        <div class="switch-hint">开启后 Agnes 失败时自动调 DeepSeek 联网，准确度更高但产生费用</div>
+      </div>
+    </div>
+    <div class="alert alert-info" id="estAlert"></div>
+    <div class="actions">
+      <button class="btn-secondary btn" onclick="goStep(1)">← 上一步</button>
+      <button class="btn" id="btnPreview" onclick="previewData()">预览数据</button>
+      <button class="btn btn-success" id="btnStart" disabled onclick="startInquiry()">🚀 开始询价</button>
+    </div>
+    <div id="previewContainer" class="hidden"></div>
+  </div>
+
+  <!-- Step 3: 询价进度 -->
+  <div class="card step" id="step-3">
+    <div class="card-title"><span class="num">3</span>AI询价进行中</div>
+    <div class="progress-bar">
+      <div class="progress-fill" id="progressFill" style="width:0%">0%</div>
+    </div>
+    <div id="progressText" style="text-align:center;font-size:13px;color:#667;margin:8px 0;"></div>
+    <div class="log-box" id="logBox"></div>
+    <div class="actions">
+      <button class="btn btn-warning" id="btnCancel" onclick="cancelTask()">⏹ 取消任务</button>
+    </div>
+  </div>
+
+  <!-- Step 4: 结果与核实 -->
+  <div class="card step" id="step-4">
+    <div class="card-title"><span class="num">4</span>询价结果与人工核实</div>
+    <div id="resultStats"></div>
+    <div id="itemsContainer"></div>
+    <div class="alert alert-warning">
+      ⚠️ 以下为AI生成的<b>行情参考价</b>，未经核实。请电话确认后回填，生成正式报告。
+    </div>
+    <div id="verifyContainer"></div>
+    <div class="actions">
+      <button class="btn" onclick="downloadReport('draft')">📥 下载草稿报告（行情参考价）</button>
+      <button class="btn btn-success" id="btnVerify" onclick="submitVerify()">📝 回填核实价并生成正式报告</button>
+      <button class="btn btn-secondary" id="btnFormalDownload" disabled onclick="downloadReport('formal')">📥 下载正式报告</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentFileId = null;
+let currentTaskId = null;
+let currentResults = null;
+let pollTimer = null;
+let verifyRows = [];
+
+function goStep(n) {
+  for (let i = 1; i <= 4; i++) {
+    document.getElementById(`step-${i}`).classList.toggle('active', i === n);
+  }
+  for (let i = 1; i <= 4; i++) {
+    const nav = document.getElementById(`nav-${i}`);
+    nav.classList.remove('active', 'done');
+    if (i < n) nav.classList.add('done');
+    else if (i === n) nav.classList.add('active');
+  }
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+uploadZone.addEventListener('click', () => fileInput.click());
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e => { if (e.target.files.length) handleFile(e.target.files[0]); });
+
+async function handleFile(file) {
+  document.getElementById('fileInfo').textContent = `📄 ${file.name} (${(file.size/1024).toFixed(1)} KB)`;
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    const res = await fetch('/api/upload', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    currentFileId = data.file_id;
+    document.getElementById('fileInfo').innerHTML =
+      `✅ ${data.filename} · ${data.row_count} 行 · ${data.columns.length} 列`;
+    document.getElementById('btnToMapping').disabled = false;
+    renderMapping(data);
+  } catch (e) { alert('上传失败：' + e.message); }
+}
+
+function downloadTemplate() { window.location.href = '/api/template'; }
+
+function renderMapping(data) {
+  const container = document.getElementById('mappingContainer');
+  const columns = data.columns;
+  const auto = data.auto_mapping || {};
+  const templates = data.template_columns;
+  let html = '<table class="mapping-table"><tr><th>模板列</th><th>对应Excel列</th></tr>';
+  for (const t of templates) {
+    const selected = auto[t.key];
+    let opts = '<option value="">（不映射）</option>';
+    for (let i = 0; i < columns.length; i++) {
+      opts += `<option value="${i}" ${selected === i ? 'selected' : ''}>${columns[i]}</option>`;
+    }
+    html += `<tr><td>${t.label}</td><td><select id="map_${t.key}">${opts}</select></td></tr>`;
+  }
+  html += '</table>';
+  container.innerHTML = html;
+}
+
+async function previewData() {
+  const mapping = getMapping();
+  const res = await fetch('/api/preview', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ file_id: currentFileId, column_mapping: mapping }),
+  });
+  const data = await res.json();
+  if (data.error) { alert(data.error); return; }
+  const container = document.getElementById('previewContainer');
+  let html = `<div style="margin-top:12px;font-size:13px;color:#667;">预览前 ${data.preview_rows.length} 行（共 ${data.total_rows} 行）</div>`;
+  if (data.preview_rows.length) {
+    html += '<table class="preview-table"><tr>';
+    const keys = Object.keys(data.preview_rows[0]);
+    for (const k of keys) html += `<th>${k}</th>`;
+    html += '</tr>';
+    for (const row of data.preview_rows.slice(0, 20)) {
+      html += '<tr>';
+      for (const k of keys) html += `<td>${row[k] || ''}</td>`;
+      html += '</tr>';
+    }
+    html += '</table>';
+  }
+  container.innerHTML = html;
+  container.classList.remove('hidden');
+  const webSearch = document.getElementById('webSearchSwitch').checked;
+  const est = data.total_rows;
+  const sc = document.getElementById('supplierCount').value;
+  document.getElementById('estAlert').innerHTML =
+    `📊 预计消耗：${est} 项材料 × ${sc} 家供应商 = ${est * sc} 条报价` +
+    ` | Agnes 调用 ~${est} 次` +
+    (webSearch ? ` + DeepSeek 联网 ~${est} 次` : '（仅 Agnes）');
+  document.getElementById('btnStart').disabled = false;
+}
+
+function getMapping() {
+  const mapping = {};
+  document.querySelectorAll('[id^="map_"]').forEach(sel => {
+    const key = sel.id.replace('map_', '');
+    mapping[key] = sel.value === '' ? null : parseInt(sel.value);
+  });
+  return mapping;
+}
+
+async function startInquiry() {
+  const mapping = getMapping();
+  const webSearch = document.getElementById('webSearchSwitch').checked;
+  const supplierCount = parseInt(document.getElementById('supplierCount').value);
+  const res = await fetch('/api/start', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ file_id: currentFileId, column_mapping: mapping, enable_web_search: webSearch, suppliers_per_item: supplierCount }),
+  });
+  const data = await res.json();
+  if (data.error) { alert(data.error); return; }
+  currentTaskId = data.task_id;
+  verifyRows = [];
+  goStep(3);
+  document.getElementById('logBox').innerHTML = '';
+  document.getElementById('btnCancel').disabled = false;
+  startPolling();
+}
+
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(pollStatus, 1500);
+  pollStatus();
+}
+
+async function pollStatus() {
+  if (!currentTaskId) return;
+  try {
+    const res = await fetch(`/api/status/${currentTaskId}`);
+    const data = await res.json();
+    if (data.error) { clearInterval(pollTimer); return; }
+    const pct = data.total ? Math.round(data.completed / data.total * 100) : 0;
+    document.getElementById('progressFill').style.width = pct + '%';
+    document.getElementById('progressFill').textContent = pct + '%';
+    document.getElementById('progressText').textContent =
+      `${data.completed} / ${data.total} 项` + (data.current ? ` · 当前：${data.current}` : '');
+    const logBox = document.getElementById('logBox');
+    logBox.innerHTML = data.logs.map(l =>
+      `<div class="log-line ${l.type}"><span class="time">${l.time}</span>${l.msg}</div>`
+    ).join('');
+    logBox.scrollTop = logBox.scrollHeight;
+    if (data.status !== 'running') {
+      clearInterval(pollTimer);
+      document.getElementById('btnCancel').disabled = true;
+      if (data.status === 'completed' || data.status === 'cancelled') {
+        await loadResults();
+        goStep(4);
+      } else if (data.status === 'failed') {
+        alert('询价任务失败，请检查日志');
+      }
+    }
+  } catch (e) {}
+}
+
+async function cancelTask() {
+  if (!currentTaskId) return;
+  if (!confirm('确定取消任务？已完成的结果会保留。')) return;
+  await fetch(`/api/cancel/${currentTaskId}`, { method: 'POST' });
+}
+
+async function loadResults() {
+  const res = await fetch(`/api/result/${currentTaskId}`);
+  const data = await res.json();
+  if (data.error) { alert(data.error); return; }
+  currentResults = data;
+  const stats = document.getElementById('resultStats');
+  const conf = data.confidence_stats || {};
+  stats.innerHTML = `
+    <div class="stats-grid">
+      <div class="stat-card"><div class="value">${data.total}</div><div class="label">材料总数</div></div>
+      <div class="stat-card"><div class="value">${data.success_count}</div><div class="label">询价成功</div></div>
+      <div class="stat-card high"><div class="value">${conf.high || 0}</div><div class="label">高置信度</div></div>
+      <div class="stat-card medium"><div class="value">${conf.medium || 0}</div><div class="label">中置信度</div></div>
+      <div class="stat-card low"><div class="value">${conf.low || 0}</div><div class="label">低置信度</div></div>
+    </div>
+  `;
+  // 渲染询价明细表
+  renderItems(data.items || []);
+  loadVerifyTable();
+}
+
+function renderItems(items) {
+  const container = document.getElementById('itemsContainer');
+  if (!items.length) {
+    container.innerHTML = '<div style="padding:20px;text-align:center;color:#888;">暂无询价明细</div>';
+    return;
+  }
+  const confColor = { high: '#28a745', medium: '#ffc107', low: '#dc3545' };
+  const confText = { high: '高', medium: '中', low: '低' };
+  let html = '<div style="margin:16px 0;font-size:14px;font-weight:bold;">📋 询价明细</div>';
+  html += '<table class="verify-table"><tr><th>序号</th><th>材料名称</th><th>规格</th><th>供应商</th><th>报价</th><th>置信度</th><th>来源</th></tr>';
+  let seq = 0;
+  for (const item of items) {
+    seq++;
+    if (!item.success || !item.suppliers.length) {
+      html += `<tr><td>${seq}</td><td>${item.name}</td><td>${item.spec}</td><td colspan="4" style="color:#dc3545;">⚠️ ${item.error || '询价失败'}</td></tr>`;
+      continue;
+    }
+    const suppliers = item.suppliers;
+    suppliers.forEach((s, i) => {
+      const conf = confColor[s.confidence] || confColor.medium;
+      html += `<tr>
+        <td>${i === 0 ? seq : ''}</td>
+        <td>${i === 0 ? item.name : ''}</td>
+        <td>${i === 0 ? item.spec : ''}</td>
+        <td>${s.name}</td>
+        <td style="font-weight:bold;color:#667eea;">¥${s.price}/${s.unit}</td>
+        <td><span style="color:${conf};font-weight:bold;">●${confText[s.confidence]}</span></td>
+        <td style="font-size:12px;color:#888;">${i === 0 ? item.source : ''}</td>
+      </tr>`;
+    });
+  }
+  html += '</table>';
+  container.innerHTML = html;
+}
+
+function loadVerifyTable() {
+  const container = document.getElementById('verifyContainer');
+  const items = currentResults?.items || [];
+  if (!items.length) {
+    container.innerHTML = '<div style="padding:20px;text-align:center;color:#888;">暂无询价明细</div>';
+    verifyRows = [];
+    return;
+  }
+  let html = `
+    <div style="margin:12px 0;font-size:13px;color:#667;">
+      💡 下方为AI返回的供应商及联系电话。请电话核实后，在「核实成交价」列填入真实价格，系统会更新报告并积累到历史数据库。
+    </div>
+    <table class="verify-table" id="verifyTable">
+      <tr><th>材料名称</th><th>供应商</th><th>联系电话</th><th>AI建议价</th><th>核实成交价</th><th>备注</th></tr>
+  `;
+  for (const item of items) {
+    if (!item.suppliers || !item.suppliers.length) {
+      html += `<tr><td>${item.name}</td><td colspan="5" style="color:#dc3545;">⚠️ ${item.error || '询价失败'}</td></tr>`;
+      continue;
+    }
+    for (const s of item.suppliers) {
+      const sid = `${item.name}__${s.name}`;
+      html += `<tr>
+        <td>${item.name}</td>
+        <td>${s.name}</td>
+        <td>${s.phone ? `<a href="tel:${s.phone}" style="color:#667eea;">${s.phone}</a>` : '<span style="color:#999;">未提供</span>'}</td>
+        <td style="color:#667;">¥${s.price}/${s.unit}</td>
+        <td><input type="number" class="v-price" data-name="${item.name}" data-supplier="${s.name}" data-phone="${s.phone}" placeholder="核实价" style="width:90px;"></td>
+        <td><input type="text" class="v-note" data-name="${item.name}" data-supplier="${s.name}" placeholder="备注" style="width:120px;"></td>
+      </tr>`;
+    }
+  }
+  html += '</table>';
+  container.innerHTML = html;
+  verifyRows = [];
+}
+
+function addVerifyRow() {
+  // 已废弃，保留空函数避免报错
+}
+
+async function submitVerify() {
+  // 从表格收集已填核实价的行
+  verifyRows = [];
+  document.querySelectorAll('.v-price').forEach(inp => {
+    const price = inp.value.trim();
+    if (price) {
+      const name = inp.dataset.name;
+      const supplier = inp.dataset.supplier;
+      const phone = inp.dataset.phone || '';
+      const noteEl = document.querySelector(`.v-note[data-name="${name}"][data-supplier="${supplier}"]`);
+      const note = noteEl ? noteEl.value.trim() : '';
+      verifyRows.push({
+        material_name: name,
+        supplier: supplier,
+        verified_price: parseFloat(price),
+        phone: phone,
+        verified_note: note,
+      });
+    }
+  });
+  if (!verifyRows.length) { alert('请至少填写一项核实成交价'); return; }
+  const res = await fetch('/api/verify', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ task_id: currentTaskId, verifications: verifyRows }),
+  });
+  const data = await res.json();
+  if (data.error) { alert(data.error); return; }
+  alert(`✅ 已回填 ${data.updated} 项核实价格`);
+  document.getElementById('btnFormalDownload').disabled = false;
+}
+
+function downloadReport(type) {
+  if (!currentTaskId) { alert('暂无任务'); return; }
+  window.location.href = `/api/download/${currentTaskId}?report_type=${type}`;
+}
+</script>
+</body>
+</html>

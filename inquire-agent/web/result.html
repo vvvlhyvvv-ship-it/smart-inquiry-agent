@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1280">
+<title>询价结果 - 市场询价智能体</title>
+<style>
+  :root {
+    --primary: #4472C4;
+    --primary-hover: #3A63A8;
+    --accent: #C00000;
+    --bg: #F5F7FA;
+    --surface: #FFFFFF;
+    --border: #E4E8EE;
+    --fg: #1D2B3A;
+    --fg-secondary: #5E6D82;
+    --fg-muted: #939EB0;
+    --success: #0FAD63;
+    --warning: #FAAD14;
+    --shadow-sm: 0 1px 3px rgba(29, 43, 58, 0.06);
+    --shadow-md: 0 4px 16px rgba(29, 43, 58, 0.08);
+    --radius: 8px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Microsoft YaHei", "微软雅黑", sans-serif;
+    font-size: 14px;
+    color: var(--fg);
+    background: var(--bg);
+    width: 1280px;
+    margin: 0 auto;
+    min-height: 100vh;
+  }
+
+  /* ── Top Bar ── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 60px;
+    padding: 0 32px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .topbar-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    text-decoration: none;
+  }
+  .topbar-title { font-size: 16px; font-weight: 600; color: var(--fg); letter-spacing: 0.3px; }
+  .topbar-right { display: flex; align-items: center; gap: 10px; }
+  .btn-nav {
+    height: 32px;
+    padding: 0 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--fg-secondary);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    font-weight: 500;
+  }
+  .btn-nav:hover { border-color: var(--primary); color: var(--primary); }
+
+  /* ── Background Grid ── */
+  .bg-grid {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    overflow: hidden;
+  }
+  .bg-grid svg { width: 100%; height: 100%; }
+
+  /* ── Page ── */
+  .page {
+    display: flex;
+    justify-content: center;
+    padding: 40px 32px 48px;
+    position: relative;
+    z-index: 1;
+  }
+  .topbar { position: relative; z-index: 1; }
+
+  .main-card {
+    width: 100%;
+    max-width: 800px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow-sm);
+    padding: 36px 40px;
+    margin-bottom: 20px;
+  }
+  .main-card h2 { font-size: 18px; margin-bottom: 20px; color: var(--fg); }
+
+  /* ── Success Header ── */
+  .success-header {
+    text-align: center;
+    padding: 20px 0 4px;
+  }
+  .success-header .icon { font-size: 48px; margin-bottom: 8px; }
+  .success-header .title { font-size: 22px; font-weight: 700; color: var(--success); }
+
+  /* ── Stats Grid ── */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+  .stat-item {
+    text-align: center;
+    padding: 18px 12px;
+    background: #F8FAFC;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .stat-value { font-size: 26px; font-weight: 700; color: var(--primary); }
+  .stat-label { font-size: 12px; color: var(--fg-muted); margin-top: 4px; }
+  .stat-item.highlight {
+    border-color: rgba(15,173,99,0.2);
+    background: linear-gradient(135deg, rgba(15,173,99,0.03), rgba(15,173,99,0.06));
+  }
+  .stat-item.highlight .stat-value { color: var(--success); }
+  .stat-item.warn { border-color: rgba(250,173,20,0.2); background: rgba(250,173,20,0.04); }
+  .stat-item.warn .stat-value { color: var(--warning); }
+
+  /* ── Platform Bars ── */
+  .platform-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .platform-label { width: 90px; font-size: 13px; color: var(--fg-secondary); text-align: right; }
+  .platform-track {
+    flex: 1;
+    height: 22px;
+    background: #F0F2F6;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .platform-fill { height: 100%; border-radius: 4px; transition: width 0.6s ease; }
+  .fill-1688 { background: linear-gradient(90deg, #FF7A45, #FF9C6E); }
+  .fill-mysteel { background: linear-gradient(90deg, var(--primary), #5A86D4); }
+  .fill-gldjc { background: linear-gradient(90deg, #0FAD63, #36CF7D); }
+  .fill-ai { background: linear-gradient(90deg, #FAAD14, #FFC53D); }
+  .platform-pct { width: 50px; font-size: 12px; color: var(--fg-muted); text-align: right; }
+
+  /* ── Actions ── */
+  .actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin-top: 28px;
+    flex-wrap: wrap;
+  }
+  .btn-primary {
+    height: 42px;
+    padding: 0 28px;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: inherit;
+    color: #fff;
+    background: linear-gradient(180deg, var(--primary), var(--primary-hover));
+    border: none;
+    border-radius: var(--radius);
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    box-shadow: 0 2px 8px rgba(68,114,196,0.25);
+  }
+  .btn-primary:hover { opacity: 0.92; }
+  .btn-outline {
+    height: 42px;
+    padding: 0 24px;
+    font-size: 14px;
+    font-family: inherit;
+    color: var(--primary);
+    background: var(--surface);
+    border: 1px solid var(--primary);
+    border-radius: var(--radius);
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 500;
+  }
+  .btn-outline:hover { background: #F0F5FF; }
+
+  .loading { text-align: center; padding: 40px; color: var(--fg-muted); }
+  .loading .spinner {
+    display: inline-block;
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 12px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<!-- Background Grid -->
+<div class="bg-grid">
+  <svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">
+    <defs>
+      <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#E4E8EE" stroke-width="0.5" opacity="0.4"></path>
+      </pattern>
+    </defs>
+    <rect width="100%" height="100%" fill="url(#grid)"></rect>
+  </svg>
+</div>
+
+<!-- Top Bar -->
+<div class="topbar">
+  <a href="/" class="topbar-brand">
+    <svg width="32" height="32" viewBox="0 0 32 32" fill="none" style="flex-shrink:0;border-radius:8px;overflow:hidden">
+      <rect width="32" height="32" rx="8" fill="url(#logoGrad)"></rect>
+      <path d="M8 16L13 11L18 16L13 21Z" fill="#fff" opacity="0.9"></path>
+      <path d="M14 10L22 16L14 22" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"></path>
+      <defs><linearGradient id="logoGrad" x1="0" y1="0" x2="32" y2="32"><stop offset="0%" stop-color="#5A8FD4"></stop><stop offset="100%" stop-color="#3458A0"></stop></linearGradient></defs>
+    </svg>
+    <span class="topbar-title">市场询价智能体</span>
+  </a>
+  <div class="topbar-right">
+    <a href="/" class="btn-nav">← 返回首页</a>
+  </div>
+</div>
+
+<div class="page">
+  <div style="width:100%;max-width:800px;">
+
+    <!-- Success Header -->
+    <div class="main-card" style="padding-bottom:20px;">
+      <div class="success-header">
+        <div class="icon">✅</div>
+        <div class="title">询价完成</div>
+      </div>
+    </div>
+
+    <!-- Summary Stats -->
+    <div class="main-card" id="summaryCard">
+      <h2>📊 汇总统计</h2>
+      <div class="loading" id="loadingStats">
+        <div class="spinner"></div>
+        <div>加载结果中...</div>
+      </div>
+      <div class="stats-grid hidden" id="statsGrid"></div>
+    </div>
+
+    <!-- Platform Distribution -->
+    <div class="main-card hidden" id="platformCard">
+      <h2>📈 价格来源分布</h2>
+      <div id="platformBars"></div>
+    </div>
+
+    <!-- Actions -->
+    <div class="actions hidden" id="actionsArea">
+      <a class="btn-primary" id="downloadXlsx" href="#">
+        <span>📥</span> 下载询价报告 Excel
+      </a>
+      <a href="/" class="btn-outline">
+        <span>🔄</span> 开始新询价
+      </a>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const params = new URLSearchParams(window.location.search);
+const taskId = params.get('task_id');
+
+const labels = { '1688': '1688', 'mysteel': '我的钢铁网', 'gldjc': '广材网', 'ai_fallback': 'AI参考' };
+const colors = { '1688': 'fill-1688', 'mysteel': 'fill-mysteel', 'gldjc': 'fill-gldjc', 'ai_fallback': 'fill-ai' };
+
+async function loadResult() {
+  if (!taskId) {
+    document.getElementById('loadingStats').innerHTML = '<div style="color:var(--accent)">缺少任务ID，请从进度页跳转</div>';
+    return;
+  }
+
+  try {
+    const resp = await fetch(`/api/result/${taskId}`);
+    const data = await resp.json();
+
+    // Stats
+    const stats = [
+      { v: data.total, l: '总材料', cls: '' },
+      { v: data.success_count, l: '自动完成', cls: 'highlight' },
+      { v: data.ai_fallback_count, l: 'AI参考（需复核）', cls: data.ai_fallback_count > 0 ? 'warn' : '' },
+      { v: data.duration || '—', l: '耗时', cls: '' },
+      { v: data.beans_used, l: '消耗询价豆', cls: '' },
+      { v: (data.success_count / data.total * 100).toFixed(1) + '%', l: '完成率', cls: 'highlight' },
+    ];
+
+    document.getElementById('statsGrid').innerHTML = stats.map(s =>
+      `<div class="stat-item ${s.cls}"><div class="stat-value">${s.v}</div><div class="stat-label">${s.l}</div></div>`
+    ).join('');
+    document.getElementById('statsGrid').classList.remove('hidden');
+    document.getElementById('loadingStats').classList.add('hidden');
+
+    // Platform bars
+    if (data.platform_stats) {
+      const total = Object.values(data.platform_stats).reduce((a, b) => a + b, 0);
+      document.getElementById('platformBars').innerHTML = Object.entries(data.platform_stats).map(([k, v]) => {
+        const pct = total > 0 ? (v / total * 100).toFixed(1) : '0';
+        return `<div class="platform-bar">
+          <span class="platform-label">${labels[k] || k}</span>
+          <div class="platform-track"><div class="platform-fill ${colors[k] || ''}" style="width:${pct}%"></div></div>
+          <span class="platform-pct">${pct}%</span>
+        </div>`;
+      }).join('');
+      document.getElementById('platformCard').classList.remove('hidden');
+    }
+
+    document.getElementById('downloadXlsx').href = `/api/download/${taskId}?format=xlsx`;
+    document.getElementById('actionsArea').classList.remove('hidden');
+
+  } catch (e) {
+    document.getElementById('loadingStats').innerHTML = '<div style="color:var(--accent)">加载结果失败，请刷新重试</div>';
+  }
+}
+
+loadResult();
+</script>
+</body>
+</html>
