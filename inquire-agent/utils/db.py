@@ -83,7 +83,27 @@ CREATE TABLE IF NOT EXISTS bean_transactions (
     description TEXT DEFAULT '',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- v5.1 大平台接入改造：项目表
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    type TEXT DEFAULT '',
+    region TEXT DEFAULT '',
+    budget REAL DEFAULT 0,
+    description TEXT DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
+
+# v5.1 大平台接入改造：price_records 表新增字段（ALTER TABLE，旧数据自动补空值）
+_ALTER_SQL = [
+    "ALTER TABLE price_records ADD COLUMN project_id TEXT REFERENCES projects(id)",
+    "ALTER TABLE price_records ADD COLUMN project_type TEXT DEFAULT ''",
+    "ALTER TABLE price_records ADD COLUMN region TEXT DEFAULT ''",
+    "ALTER TABLE price_records ADD COLUMN procurement_type TEXT DEFAULT ''",
+]
 
 _write_queue = queue.Queue()
 _conn_lock = threading.Lock()
@@ -102,6 +122,12 @@ def _init_db():
     _ensure_db_dir()
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.executescript(SCHEMA_SQL)
+    # v5.1 大平台接入改造：为 price_records 表追加字段（已存在则忽略）
+    for sql in _ALTER_SQL:
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass  # 列已存在，跳过
     conn.commit()
     return conn
 
@@ -132,8 +158,9 @@ def save_price_record(**kwargs):
     sql = """INSERT OR REPLACE INTO price_records
         (material_name, material_spec, material_unit, supplier, supplier_phone,
          price, price_unit, source_platform, search_url, screenshot_path,
-         confidence, is_anomaly, task_id, inquiry_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+         confidence, is_anomaly, task_id, inquiry_date,
+         project_id, project_type, region, procurement_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
     params = (
         kwargs["material_name"],
         kwargs.get("material_spec", ""),
@@ -149,6 +176,10 @@ def save_price_record(**kwargs):
         kwargs.get("is_anomaly", 0),
         kwargs["task_id"],
         kwargs["inquiry_date"],
+        kwargs.get("project_id", ""),
+        kwargs.get("project_type", ""),
+        kwargs.get("region", ""),
+        kwargs.get("procurement_type", ""),
     )
     _write_queue.put((sql, params))
 
@@ -195,6 +226,90 @@ def stop_db_writer():
     """优雅关闭写入线程"""
     _write_queue.put(None)
     _writer_thread.join(timeout=5)
+
+
+# ==================== v5.1 大平台接入：项目 + 数据导出 ====================
+
+def save_project(project_id: str, name: str, ptype: str = "", region: str = "",
+                 budget: float = 0, description: str = ""):
+    """保存项目信息（通过写入队列）"""
+    sql = """INSERT OR REPLACE INTO projects (id, name, type, region, budget, description, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"""
+    _write_queue.put((sql, (project_id, name, ptype, region, budget, description)))
+
+
+def get_project(project_id: str) -> dict:
+    """获取项目信息"""
+    _ensure_db_dir()
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    try:
+        row = conn.execute(
+            "SELECT id, name, type, region, budget, description FROM projects WHERE id = ?",
+            (project_id,)
+        ).fetchone()
+        if row:
+            return {"id": row[0], "name": row[1], "type": row[2], "region": row[3],
+                    "budget": row[4], "description": row[5]}
+        return None
+    finally:
+        conn.close()
+
+
+def query_price_records(material_name: str = None, region: str = None,
+                        project_type: str = None, start_date: str = None,
+                        end_date: str = None, limit: int = 100) -> list:
+    """
+    查询价格记录（供大平台价格审查模块用）
+    支持按材料名/地区/项目类型/日期范围筛选
+    """
+    _ensure_db_dir()
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    try:
+        sql = """SELECT material_name, material_spec, material_unit, supplier, supplier_phone,
+                 price, price_unit, source_platform, confidence, inquiry_date,
+                 project_id, project_type, region, procurement_type
+                 FROM price_records WHERE 1=1"""
+        params = []
+        if material_name:
+            sql += " AND material_name LIKE ?"
+            params.append(f"%{material_name}%")
+        if region:
+            sql += " AND region = ?"
+            params.append(region)
+        if project_type:
+            sql += " AND project_type = ?"
+            params.append(project_type)
+        if start_date:
+            sql += " AND inquiry_date >= ?"
+            params.append(start_date)
+        if end_date:
+            sql += " AND inquiry_date <= ?"
+            params.append(end_date)
+        sql += " ORDER BY inquiry_date DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(sql, params).fetchall()
+        return [
+            {"material_name": r[0], "material_spec": r[1], "material_unit": r[2],
+             "supplier": r[3], "supplier_phone": r[4], "price": r[5], "price_unit": r[6],
+             "source_platform": r[7], "confidence": r[8], "inquiry_date": r[9],
+             "project_id": r[10], "project_type": r[11], "region": r[12], "procurement_type": r[13]}
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+def list_projects() -> list:
+    """列出所有项目"""
+    _ensure_db_dir()
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    try:
+        rows = conn.execute(
+            "SELECT id, name, type, region, budget FROM projects ORDER BY updated_at DESC"
+        ).fetchall()
+        return [{"id": r[0], "name": r[1], "type": r[2], "region": r[3], "budget": r[4]} for r in rows]
+    finally:
+        conn.close()
 
 
 # ==================== 用户操作 ====================

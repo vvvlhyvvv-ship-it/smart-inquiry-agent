@@ -16,7 +16,7 @@ import webbrowser
 from datetime import datetime
 
 from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -186,6 +186,22 @@ async def start_inquiry(data: dict):
     enable_web_search = data.get("enable_web_search", True)
     suppliers_per_item = int(data.get("suppliers_per_item", 3))
 
+    # v5.1 大平台接入：项目信息（可选）
+    project_info = data.get("project_info", {})
+    project_id = None
+    if project_info and project_info.get("name"):
+        project_id = uuid.uuid4().hex[:12]
+        from utils.db import save_project
+        save_project(
+            project_id=project_id,
+            name=project_info.get("name", ""),
+            ptype=project_info.get("type", ""),
+            region=project_info.get("region", ""),
+            budget=float(project_info.get("budget", 0) or 0),
+            description=project_info.get("description", ""),
+        )
+        logger.info(f"📁 项目已记录: {project_info.get('name')} (id={project_id})")
+
     if file_id not in _uploaded_files:
         return JSONResponse({"error": "文件未找到"}, status_code=404)
 
@@ -212,6 +228,8 @@ async def start_inquiry(data: dict):
         "cancel_event": cancel_event,
         "enable_web_search": enable_web_search,
         "suppliers_per_item": suppliers_per_item,
+        "project_id": project_id,
+        "project_info": project_info,
         "started_at": datetime.now().isoformat(),
         "logs": [],
     }
@@ -520,9 +538,10 @@ async def verify_prices(data: dict):
                         s.phone = phone
             updated += 1
 
-            # 存入数据库（积累真实成交价）
+            # 存入数据库（积累真实成交价 + 项目信息）
             try:
                 from utils.db import save_price_record
+                project_info = task.get("project_info", {})
                 save_price_record(
                     material_name=name,
                     material_spec=r.spec,
@@ -535,6 +554,10 @@ async def verify_prices(data: dict):
                     confidence="high",
                     task_id=task_id,
                     inquiry_date=datetime.now().strftime("%Y-%m-%d"),
+                    project_id=task.get("project_id", ""),
+                    project_type=project_info.get("type", ""),
+                    region=project_info.get("region", ""),
+                    procurement_type=project_info.get("procurement_type", ""),
                 )
             except Exception as e:
                 logger.warning(f"核实价入库失败: {name} - {e}")
@@ -703,6 +726,130 @@ async def config_page():
 async def admin_page():
     """管理员入口页"""
     return _nocache_file(os.path.join(web_dir, "admin.html"))
+
+
+# ============================================================
+# 10. v5.1 大平台接入：API v1 前缀重定向（向后兼容）
+# ============================================================
+
+_V1_MAP = {
+    "/api/upload": ("POST", "/api/v1/inquiry/upload"),
+    "/api/preview": ("POST", "/api/v1/inquiry/preview"),
+    "/api/start": ("POST", "/api/v1/inquiry/start"),
+    "/api/cancel": ("POST", "/api/v1/inquiry/cancel"),
+    "/api/verify": ("POST", "/api/v1/inquiry/verify"),
+}
+_V1_GET_MAP = {
+    "/api/status": "/api/v1/inquiry/status",
+    "/api/result": "/api/v1/inquiry/result",
+    "/api/download": "/api/v1/inquiry/download",
+}
+
+
+@app.api_route("/api/v1/inquiry/upload", methods=["POST"])
+async def v1_upload(file: UploadFile = File(...)):
+    return await upload_excel(file)
+
+
+@app.api_route("/api/v1/inquiry/preview", methods=["POST"])
+async def v1_preview(data: dict):
+    return await preview_data(data)
+
+
+@app.api_route("/api/v1/inquiry/start", methods=["POST"])
+async def v1_start(data: dict):
+    return await start_inquiry(data)
+
+
+@app.api_route("/api/v1/inquiry/status/{task_id}", methods=["GET"])
+async def v1_status(task_id: str):
+    return await get_status(task_id)
+
+
+@app.api_route("/api/v1/inquiry/cancel/{task_id}", methods=["POST"])
+async def v1_cancel(task_id: str):
+    return await cancel_task(task_id)
+
+
+@app.api_route("/api/v1/inquiry/result/{task_id}", methods=["GET"])
+async def v1_result(task_id: str):
+    return await get_result(task_id)
+
+
+@app.api_route("/api/v1/inquiry/download/{task_id}", methods=["GET"])
+async def v1_download(task_id: str, report_type: str = "draft"):
+    return await download_report(task_id, report_type)
+
+
+@app.api_route("/api/v1/inquiry/verify", methods=["POST"])
+async def v1_verify(data: dict):
+    return await verify_prices(data)
+
+
+# ============================================================
+# 11. v5.1 大平台接入：数据导出 + 价格查询接口
+# ============================================================
+
+@app.get("/api/v1/export/price_records")
+async def export_price_records(
+    start_date: str = None,
+    end_date: str = None,
+    project_type: str = None,
+    region: str = None,
+    material_name: str = None,
+    format: str = "json",
+):
+    """数据导出接口——供未来大平台拉取价格数据"""
+    from utils.db import query_price_records
+    records = query_price_records(
+        material_name=material_name, region=region, project_type=project_type,
+        start_date=start_date, end_date=end_date, limit=10000,
+    )
+    if format == "csv":
+        import csv, io
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=records[0].keys() if records else [])
+        writer.writeheader()
+        writer.writerows(records)
+        return JSONResponse({"format": "csv", "count": len(records), "data": buf.getvalue()})
+    return {"format": "json", "count": len(records), "records": records}
+
+
+@app.get("/api/v1/export/projects")
+async def export_projects():
+    """导出项目列表"""
+    from utils.db import list_projects
+    return {"count": len(list_projects()), "projects": list_projects()}
+
+
+@app.get("/api/v1/price/search")
+async def price_search(
+    material_name: str,
+    region: str = None,
+    project_type: str = None,
+    start_date: str = None,
+    end_date: str = None,
+):
+    """
+    价格审查模块调用的查询接口
+
+    示例：查询山西市政项目水泥近3个月价格
+    → /api/v1/price/search?material_name=水泥&region=山西&project_type=市政&start_date=2026-05-01
+    """
+    from utils.db import query_price_records
+    records = query_price_records(
+        material_name=material_name, region=region, project_type=project_type,
+        start_date=start_date, end_date=end_date, limit=500,
+    )
+    # 汇总统计
+    prices = [r["price"] for r in records if r["price"] > 0]
+    stats = {
+        "count": len(records),
+        "min_price": min(prices) if prices else 0,
+        "max_price": max(prices) if prices else 0,
+        "avg_price": round(sum(prices) / len(prices), 2) if prices else 0,
+    }
+    return {"material_name": material_name, "stats": stats, "records": records}
 
 
 # ============================================================

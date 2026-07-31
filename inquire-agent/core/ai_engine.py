@@ -35,7 +35,7 @@ _KNOWLEDGE_PROMPT = """你是造价工程师的AI询价助手。请基于你的�
 要求：
 1. 给出 {supplier_count} 家常见供应商/品牌的参考报价（基于你的训练知识）
 2. 价格必须为数字，单位与材料单位一致
-3. 每家供应商必须提供联系电话，优先填手机号码（1开头的11位号码），其次座机（含区号），如不确定真实电话，给出该品牌官方客服电话或经销商查询电话
+3. 每家供应商必须提供真实可拨打的联系电话，优先填手机号码（1开头的11位完整号码，如13812345678），其次座机（含区号，如010-12345678）。禁止使用XXX/XXXX等占位符，禁止部分隐藏。如无法确定真实手机号，给出该品牌官方400客服电话或厂商公布的销售热线。
 4. 如不完全了解该材料，仍给出最合理的估算，并在 note 中说明
 5. 这是AI知识推理价格，不含实时联网数据，仅供预算参考
 
@@ -63,7 +63,7 @@ _WEBSEARCH_PROMPT = """你是造价工程师的AI询价助手。请联网搜索�
 要求：
 1. 联网搜索该材料的近期市场报价，聚合 {supplier_count} 家供应商/品牌
 2. 价格必须为数字，优先采用含税含运费报价
-3. 每家供应商必须提供联系电话，优先填手机号码（1开头的11位号码），其次座机（含区号），从搜索结果中提取或给出该品牌官方电话
+3. 每家供应商必须提供真实可拨打的联系电话，优先填手机号码（1开头的11位完整号码，如13812345678），其次座机（含区号，如010-12345678）。禁止使用XXX/XXXX等占位符，禁止部分隐藏。从搜索结果中提取真实号码，或给出该品牌官方400客服电话。
 4. 每条结果必须附带来源信息（source_url、source_title）
 5. 如搜不到实时数据，返回空数组 []，不要编造
 
@@ -345,7 +345,7 @@ class AIEngine:
                 supplier=item.get("supplier", "未知供应商"),
                 price=price,
                 unit=item.get("unit", ""),
-                phone=item.get("phone", ""),
+                phone=self._clean_phone(item.get("phone", "")),
                 product_title=item.get("product_title", ""),
                 confidence=item.get("confidence", default_confidence),
                 is_anomaly=False,
@@ -368,3 +368,14 @@ class AIEngine:
         # 取最高的置信度
         priority = {"high": 3, "medium": 2, "low": 1}
         return max(result.suppliers, key=lambda s: priority.get(s.confidence, 0)).confidence
+
+    @staticmethod
+    def _clean_phone(phone: str) -> str:
+        """清理电话号码：含占位符(X/x/*)的假号码返回空字符串"""
+        if not phone:
+            return ""
+        phone = phone.strip()
+        # 含 X/x/* 说明是占位符，用户无法拨打
+        if any(c in phone for c in "Xx*"):
+            return ""
+        return phone

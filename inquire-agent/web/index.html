@@ -167,6 +167,70 @@ input:checked + .slider:before { transform: translateX(20px); }
       <div class="file-info" id="fileInfo"></div>
     </div>
     <input type="file" id="fileInput" accept=".xlsx,.xls" class="hidden">
+    <!-- v5.1 项目信息（可选，折叠） -->
+    <details style="margin-top:16px;border:1px solid #e2e8f0;border-radius:6px;padding:0;">
+      <summary style="padding:12px 16px;cursor:pointer;font-size:14px;font-weight:500;color:#555;user-select:none;">
+        📋 项目信息（可选，填写后价格数据更有价值）
+      </summary>
+      <div style="padding:12px 16px;border-top:1px solid #e2e8f0;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div>
+            <label style="font-size:12px;color:#667;">项目名称</label>
+            <input id="projName" type="text" placeholder="如：山西某物流园项目" style="width:100%;padding:6px 10px;border:1px solid #cbd5e0;border-radius:4px;font-size:13px;margin-top:3px;">
+          </div>
+          <div>
+            <label style="font-size:12px;color:#667;">项目类型</label>
+            <select id="projType" style="width:100%;padding:6px 10px;border:1px solid #cbd5e0;border-radius:4px;font-size:13px;margin-top:3px;">
+              <option value="">（不选）</option>
+              <option value="市政">市政</option>
+              <option value="房建">房建</option>
+              <option value="园林">园林</option>
+              <option value="公路">公路</option>
+              <option value="机电安装">机电安装</option>
+              <option value="水利">水利</option>
+              <option value="其他">其他</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:12px;color:#667;">地区</label>
+            <select id="projRegion" style="width:100%;padding:6px 10px;border:1px solid #cbd5e0;border-radius:4px;font-size:13px;margin-top:3px;">
+              <option value="">（不选）</option>
+              <option value="北京">北京</option><option value="上海">上海</option>
+              <option value="广东">广东</option><option value="山西">山西</option>
+              <option value="江苏">江苏</option><option value="浙江">浙江</option>
+              <option value="山东">山东</option><option value="河南">河南</option>
+              <option value="四川">四川</option><option value="湖北">湖北</option>
+              <option value="湖南">湖南</option><option value="福建">福建</option>
+              <option value="安徽">安徽</option><option value="江西">江西</option>
+              <option value="河北">河北</option><option value="陕西">陕西</option>
+              <option value="辽宁">辽宁</option><option value="吉林">吉林</option>
+              <option value="黑龙江">黑龙江</option><option value="广西">广西</option>
+              <option value="云南">云南</option><option value="贵州">贵州</option>
+              <option value="甘肃">甘肃</option><option value="内蒙古">内蒙古</option>
+              <option value="新疆">新疆</option><option value="重庆">重庆</option>
+              <option value="天津">天津</option><option value="海南">海南</option>
+              <option value="宁夏">宁夏</option><option value="青海">青海</option>
+              <option value="西藏">西藏</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:12px;color:#667;">采购方式</label>
+            <select id="projProcurement" style="width:100%;padding:6px 10px;border:1px solid #cbd5e0;border-radius:4px;font-size:13px;margin-top:3px;">
+              <option value="">（不选）</option>
+              <option value="公开招标">公开招标</option>
+              <option value="邀请招标">邀请招标</option>
+              <option value="竞争性谈判">竞争性谈判</option>
+              <option value="询价采购">询价采购</option>
+              <option value="单一来源">单一来源</option>
+              <option value="其他">其他</option>
+            </select>
+          </div>
+        </div>
+        <div style="font-size:11px;color:#999;margin-top:8px;">
+          💡 非必填。填写后，核实价格会关联项目信息，未来可按地区/类型查询价格趋势。
+        </div>
+      </div>
+    </details>
     <div class="actions">
       <button class="btn-secondary btn" onclick="downloadTemplate()">📋 下载模板</button>
       <button class="btn" id="btnToMapping" disabled onclick="goStep(2)">下一步：列映射 →</button>
@@ -317,7 +381,8 @@ async function previewData() {
   if (data.preview_rows.length) {
     html += '<table class="preview-table"><tr>';
     const keys = Object.keys(data.preview_rows[0]);
-    for (const k of keys) html += `<th>${k}</th>`;
+    const colLabel = {seq:'序号', name:'材料名称', spec:'规格型号', unit:'单位', brand:'品牌', remark:'备注', qty:'数量'};
+    for (const k of keys) html += `<th>${colLabel[k] || k}</th>`;
     html += '</tr>';
     for (const row of data.preview_rows.slice(0, 20)) {
       html += '<tr>';
@@ -351,9 +416,16 @@ async function startInquiry() {
   const mapping = getMapping();
   const webSearch = document.getElementById('webSearchSwitch').checked;
   const supplierCount = parseInt(document.getElementById('supplierCount').value);
+  // v5.1 收集项目信息
+  const projectInfo = {
+    name: document.getElementById('projName')?.value.trim() || '',
+    type: document.getElementById('projType')?.value || '',
+    region: document.getElementById('projRegion')?.value || '',
+    procurement_type: document.getElementById('projProcurement')?.value || '',
+  };
   const res = await fetch('/api/start', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ file_id: currentFileId, column_mapping: mapping, enable_web_search: webSearch, suppliers_per_item: supplierCount }),
+    body: JSON.stringify({ file_id: currentFileId, column_mapping: mapping, enable_web_search: webSearch, suppliers_per_item: supplierCount, project_info: projectInfo }),
   });
   const data = await res.json();
   if (data.error) { alert(data.error); return; }
