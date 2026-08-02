@@ -127,12 +127,12 @@ def _write_header(ws, report_type: str, start_row: int = 2):
     if report_type == "formal":
         headers = [
             "序号", "材料名称", "规格", "单位", "供应商", "联系电话",
-            "AI建议价", "价格单位", "来源", "置信度", "核实成交价", "核实备注",
+            "核实成交价", "价格单位", "原始单位", "换算过程", "置信度", "来源",
         ]
     else:
         headers = [
             "序号", "材料名称", "规格", "单位", "供应商", "联系电话",
-            "AI建议价", "价格单位", "来源", "置信度", "来源URL",
+            "AI建议价", "价格单位", "原始单位", "换算过程", "来源", "置信度",
         ]
 
     for col, header in enumerate(headers, 1):
@@ -154,10 +154,11 @@ def _write_data(ws, results: List[SearchResult], report_type: str, start_row: in
 
     # 来源标签映射
     source_label = {
-        "ai_knowledge": "AI知识推理",
-        "ai_websearch": "AI联网搜索",
-        "ai_fallback":  "AI知识兜底",
-        "verified":     "人工核实",
+        "gldjc_ssr":     "广材网",
+        "ai_knowledge":  "AI知识推理",
+        "ai_websearch":  "AI联网搜索",
+        "ai_fallback":   "AI知识兜底",
+        "verified":      "人工核实",
     }
 
     for result in results:
@@ -188,33 +189,47 @@ def _write_data(ws, results: List[SearchResult], report_type: str, start_row: in
         for s in suppliers:
             sd = s.to_dict() if hasattr(s, "to_dict") else s
 
-            values = [
-                material_seq,
-                result.keyword,
-                result.spec,
-                result.material_unit or sd.get("unit", "").replace("元/", ""),
-                sd.get("supplier", ""),
-                sd.get("phone", ""),
-                sd.get("price", 0),
-                sd.get("unit", ""),
-                source_label.get(result.source, result.source),
-                sd.get("confidence", "medium"),
-            ]
-
+            # P0-12: 表头改为12列（含原始单位、换算过程）
             if report_type == "formal":
-                values.append(verified_price if verified else "")
-                values.append(verified_note)
+                values = [
+                    material_seq,
+                    result.keyword,
+                    result.spec,
+                    result.material_unit or sd.get("unit", "").replace("元/", ""),
+                    sd.get("supplier", ""),
+                    sd.get("phone", ""),
+                    verified_price if verified else sd.get("price", 0),
+                    sd.get("unit", ""),
+                    sd.get("unit_original", ""),
+                    sd.get("convert_note", ""),
+                    sd.get("confidence", "medium"),
+                    source_label.get(result.source, result.source),
+                ]
             else:
-                values.append(getattr(result, "source_url", "") or "")
+                values = [
+                    material_seq,
+                    result.keyword,
+                    result.spec,
+                    result.material_unit or sd.get("unit", "").replace("元/", ""),
+                    sd.get("supplier", ""),
+                    sd.get("phone", ""),
+                    sd.get("price", 0),
+                    sd.get("unit", ""),
+                    sd.get("unit_original", ""),
+                    sd.get("convert_note", ""),
+                    source_label.get(result.source, result.source),
+                    sd.get("confidence", "medium"),
+                ]
 
             for col, val in enumerate(values, 1):
                 cell = ws.cell(row=row_idx, column=col, value=val)
                 cell.border = _THIN_BORDER
                 cell.alignment = Alignment(vertical="center", wrap_text=True)
 
-            # 置信度单元格上色
+            # 置信度单元格上色（草稿在12列，正式在11列）
+            conf_col = 12 if report_type == "formal" else 11
             conf = sd.get("confidence", "medium")
-            conf_cell = ws.cell(row=row_idx, column=10)
+            conf_cell = ws.cell(row=row_idx, column=conf_col)
             conf_cell.fill = _CONF_FILL.get(conf, _CONF_FILL["medium"])
             if conf == "low":
                 conf_cell.font = _LOW_FONT
@@ -242,9 +257,9 @@ def _write_data(ws, results: List[SearchResult], report_type: str, start_row: in
 def _adjust_columns(ws, report_type: str):
     """调整列宽"""
     if report_type == "formal":
-        widths = [6, 26, 24, 7, 30, 15, 10, 12, 14, 8, 12, 20]
+        widths = [6, 26, 24, 7, 30, 15, 10, 12, 10, 30, 8, 14]
     else:
-        widths = [6, 26, 24, 7, 30, 15, 10, 12, 14, 8, 40]
+        widths = [6, 26, 24, 7, 30, 15, 10, 12, 10, 30, 14, 8]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -269,9 +284,10 @@ def _write_summary(ws, results, project_name, report_type, ai_summary):
             conf_counts[conf] = conf_counts.get(conf, 0) + 1
 
     source_label = {
-        "ai_knowledge": "AI知识推理",
-        "ai_websearch": "AI联网搜索",
-        "ai_fallback":  "AI知识兜底",
+        "gldjc_ssr":     "广材网",
+        "ai_knowledge":  "AI知识推理",
+        "ai_websearch":  "AI联网搜索",
+        "ai_fallback":   "AI知识兜底",
     }
     source_text = ", ".join(
         f"{source_label.get(k, k)} {v}项" for k, v in source_counts.items() if v

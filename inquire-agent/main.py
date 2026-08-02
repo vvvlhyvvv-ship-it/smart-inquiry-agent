@@ -54,6 +54,8 @@ if os.path.exists(web_dir):
 _uploaded_files: dict = {}
 # 询价任务状态：task_id -> {status, total, completed, current, results, cancel_event, config}
 _tasks: dict = {}
+# v5.2 登录浏览器实例（platform -> playwright context），用于 save 时提取 cookie
+_login_browsers: dict = {}
 
 
 # ==================== 工具函数 ====================
@@ -230,9 +232,34 @@ async def start_inquiry(data: dict):
         "suppliers_per_item": suppliers_per_item,
         "project_id": project_id,
         "project_info": project_info,
+        "login_warnings": [],  # v5.2 登录态预检警告
         "started_at": datetime.now().isoformat(),
         "logs": [],
     }
+
+    # v5.2 登录态预检（cookie 失效提前提示，不浪费询价）
+    try:
+        from utils.login_check import check_login_dual, CHECK_URLS
+        from plugins.gldjc_ssr import GldjcSSRPlugin
+        from plugins.yzw_calibrator import YzwCalibrator
+        gldjc_ok = await check_login_dual("gldjc", GldjcSSRPlugin.load_cookies(), CHECK_URLS["gldjc"])
+        if not gldjc_ok:
+            msg = "广材网登录已失效，请运行 setup_cookies.py 重新登录（本次将跳过广材网，用 AI 推理）"
+            _tasks[task_id]["login_warnings"].append(msg)
+            _tasks[task_id]["logs"].append({
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "type": "warn", "msg": f"⚠️ {msg}",
+            })
+        yzw_ok = await check_login_dual("yzw", YzwCalibrator._load_cookies(), CHECK_URLS["yzw"])
+        if not yzw_ok:
+            msg = "云筑网登录已失效，AI 价格校准将降级（置信度降低）"
+            _tasks[task_id]["login_warnings"].append(msg)
+            _tasks[task_id]["logs"].append({
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "type": "warn", "msg": f"⚠️ {msg}",
+            })
+    except Exception as e:
+        logger.warning(f"登录态预检异常（不阻塞）: {e}")
 
     save_task(task_id, len(materials))
     logger.info(
@@ -370,9 +397,10 @@ async def get_result(task_id: str):
     conf_counts = {"high": 0, "medium": 0, "low": 0}
     source_counts = {}
     source_label = {
-        "ai_knowledge": "AI知识推理",
-        "ai_websearch": "AI联网搜索",
-        "ai_fallback":  "AI知识兜底",
+        "gldjc_ssr":     "广材网",
+        "ai_knowledge":  "AI知识推理",
+        "ai_websearch":  "AI联网搜索",
+        "ai_fallback":   "AI知识兜底",
     }
     # 构建明细列表（供前端展示）
     items = []
@@ -720,6 +748,235 @@ async def test_llm_connection(data: dict):
 async def config_page():
     """模型配置页"""
     return _nocache_file(os.path.join(web_dir, "config.html"))
+
+
+@app.get("/login.html")
+async def login_manage_page():
+    """登录管理页"""
+    return _nocache_file(os.path.join(web_dir, "login.html"))
+
+
+# ============================================================
+# 12. v5.2 登录管理：广材网/云筑网 cookie 状态检查 + 触发登录
+# ============================================================
+
+@app.get("/api/login-status")
+async def get_login_status():
+    """检查广材网/云筑网登录态"""
+    from utils.login_check import check_login_dual, CHECK_URLS
+    from plugins.gldjc_ssr import GldjcSSRPlugin
+    from plugins.yzw_calibrator import YzwCalibrator
+
+    results = {}
+    # 广材网
+    try:
+        gldjc_cookies = GldjcSSRPlugin.load_cookies()
+        gldjc_ok = await check_login_dual("gldjc", gldjc_cookies, CHECK_URLS["gldjc"])
+        results["gldjc"] = {
+            "valid": gldjc_ok,
+            "cookie_count": len(gldjc_cookies),
+            "cookie_file": "accounts/gldjc_cookies.json",
+        }
+    except Exception as e:
+        results["gldjc"] = {"valid": False, "error": str(e)}
+
+    # 云筑网
+    try:
+        yzw_cookies = YzwCalibrator._load_cookies()
+        yzw_ok = await check_login_dual("yzw", yzw_cookies, CHECK_URLS["yzw"])
+        results["yzw"] = {
+            "valid": yzw_ok,
+            "cookie_count": len(yzw_cookies),
+            "cookie_file": "accounts/yzw_cookies.json",
+        }
+    except Exception as e:
+        results["yzw"] = {"valid": False, "error": str(e)}
+
+    return results
+
+
+@app.post("/api/login/{platform}")
+async def trigger_login(platform: str):
+    """
+    触发浏览器登录（后端启动带调试端口的 Chrome）
+
+    用户在弹出的浏览器中手动登录，脚本自动从 CDP 导出 cookie。
+    """
+    import subprocess
+    import threading
+
+    PLATFORM_MAP = {
+        "gldjc": {"name": "广材网", "url": "https://www.gldjc.com/"},
+        "yzw": {"name": "云筑网", "url": "https://ai.yzw.cn/"},
+    }
+    if platform not in PLATFORM_MAP:
+        return JSONResponse({"error": f"未知平台: {platform}"}, status_code=400)
+
+    cfg = PLATFORM_MAP[platform]
+
+    # v5.2：用 Playwright 持久化 profile 打开浏览器登录
+    # 后台启动 Playwright 浏览器，用户登录后 profile 自动保存
+    import threading
+
+    def open_playwright_browser():
+        import asyncio
+        from playwright.async_api import async_playwright
+
+        async def _run():
+            pw = await async_playwright().start()
+            profile_dir = f".browser-profile-{platform}"
+            import os as _os
+            _os.makedirs(profile_dir, exist_ok=True)
+            ctx = await pw.chromium.launch_persistent_context(
+                user_data_dir=profile_dir,
+                headless=False,
+                viewport={"width": 1400, "height": 900},
+                locale="zh-CN",
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+            await page.goto(cfg["url"])
+
+            # 存入全局变量，供 save 接口提取 cookie
+            _login_browsers[platform] = {"ctx": ctx, "pw": pw, "page": page}
+
+            # 定时保存 cookie 到 accounts/（每5秒检测一次，发现token就保存）
+            cookie_file = f"accounts/{platform}_cookies.json"
+            _os.makedirs("accounts", exist_ok=True)
+            for _ in range(120):  # 10分钟=120次×5秒
+                await asyncio.sleep(5)
+                try:
+                    cookies = await ctx.cookies()
+                    target = [c for c in cookies if cfg["domain"] in c.get("domain", "")]
+                    has_token = any(
+                        c.get("value", "").strip()
+                        for c in target
+                        if "token" in c.get("name", "").lower()
+                        or "auth" in c.get("name", "").lower()
+                        or "session" in c.get("name", "").lower()
+                    )
+                    if has_token:
+                        picked = {c["name"]: c["value"] for c in target if c.get("value", "").strip()}
+                        import json as _j2
+                        with open(cookie_file, "w", encoding="utf-8") as f:
+                            _j2.dump(picked, f, ensure_ascii=False)
+                        logger.info(f"🔑 [{cfg['name']}] 检测到登录态，cookie已自动保存: {len(picked)}个")
+                except Exception:
+                    pass
+
+            # 10分钟后关闭
+            try:
+                _login_browsers.pop(platform, None)
+                await ctx.close()
+                await pw.stop()
+            except Exception:
+                pass
+
+        try:
+            asyncio.run(_run())
+        except Exception as e:
+            logger.warning(f"Playwright浏览器异常: {e}")
+
+    thread = threading.Thread(target=open_playwright_browser, daemon=True)
+    thread.start()
+
+    logger.info(f"🔑 [{cfg['name']}] Playwright浏览器已启动，等待用户登录")
+    return {
+        "success": True,
+        "message": (
+            f"⚠️ {cfg['name']} 浏览器已打开！\n\n"
+            f"请在浏览器中登录 {cfg['name']}，登录成功后搜索确认能看价格，\n"
+            f"然后点击下方「提取Cookie保存」按钮。\n"
+            f"（登录态会自动保存在浏览器profile中，下次无需重新登录）"
+        ),
+        "platform": platform,
+    }
+
+
+@app.post("/api/login/{platform}/save")
+async def save_login_cookies(platform: str):
+    """从 Playwright profile 提取 cookie 并保存到 accounts/ 目录"""
+    import json as _json
+
+    PLATFORM_MAP = {
+        "gldjc": {"name": "广材网", "domain": "gldjc.com", "file": "accounts/gldjc_cookies.json"},
+        "yzw": {"name": "云筑网", "domain": "yzw.cn", "file": "accounts/yzw_cookies.json"},
+    }
+    if platform not in PLATFORM_MAP:
+        return JSONResponse({"error": f"未知平台: {platform}"}, status_code=400)
+
+    cfg = PLATFORM_MAP[platform]
+
+    # v5.2：优先从内存中的登录浏览器实例提取 cookie（即时），否则从 profile 提取
+    import asyncio as _aio
+
+    async def _extract():
+        # 优先从内存中的浏览器实例提取（用户刚登录的）
+        browser_info = _login_browsers.get(platform)
+        if browser_info:
+            try:
+                ctx = browser_info["ctx"]
+                cookies = await ctx.cookies()
+                picked = {}
+                for c in cookies:
+                    if cfg["domain"] in c.get("domain", ""):
+                        val = c.get("value", "")
+                        if val:
+                            picked[c["name"]] = val
+                if picked:
+                    return picked, None
+            except Exception as e:
+                logger.warning(f"从内存浏览器提取cookie失败: {e}")
+
+        # 退化：从持久化 profile 提取
+        from playwright.async_api import async_playwright
+        pw = await async_playwright().start()
+        profile_dir = f".browser-profile-{platform}"
+        import os as _os
+        if not _os.path.isdir(profile_dir):
+            await pw.stop()
+            return None, "浏览器profile不存在，请先点击「打开浏览器登录」"
+        ctx = await pw.chromium.launch_persistent_context(
+            user_data_dir=profile_dir,
+            headless=True,
+            viewport={"width": 1400, "height": 900},
+        )
+        cookies = await ctx.cookies()
+        await ctx.close()
+        await pw.stop()
+        picked = {}
+        for c in cookies:
+            if cfg["domain"] in c.get("domain", ""):
+                val = c.get("value", "")
+                if val:
+                    picked[c["name"]] = val
+        return picked, None
+
+    try:
+        picked, err = await _extract()
+        if err:
+            return JSONResponse({"success": False, "error": err})
+        if not picked:
+            return JSONResponse({
+                "success": False,
+                "error": f"未提取到 {cfg['name']} cookie，请确认已在浏览器中登录（登录后不要关闭浏览器窗口）",
+            })
+
+        # 保存
+        os.makedirs("accounts", exist_ok=True)
+        with open(cfg["file"], "w", encoding="utf-8") as f:
+            _json.dump(picked, f, ensure_ascii=False)
+
+        logger.info(f"🔑 [{cfg['name']}] cookie 已保存: {len(picked)} 个 → {cfg['file']}")
+        return {
+            "success": True,
+            "platform": platform,
+            "cookie_count": len(picked),
+            "message": f"✅ {cfg['name']} 登录态已保存（{len(picked)} 个 cookie）",
+        }
+
+    except Exception as e:
+        return JSONResponse({"success": False, "error": f"提取 cookie 失败: {e}"})
 
 
 @app.get("/admin.html")

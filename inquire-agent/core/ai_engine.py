@@ -19,6 +19,12 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+# P0-10④: 精简prompt（重试时用，降reasoning消耗）
+_SIMPLE_PROMPT = """请估算{name} {spec}的市场价格，返回{supplier_count}家供应商报价。
+只返回JSON数组（不要其他文字）：
+[{{"supplier":"供应商","price":数字,"unit":"{unit_str}","phone":"联系电话","confidence":"medium"}}]
+"""
+
 # ============================================================
 # Prompt 模板
 # ============================================================
@@ -102,12 +108,13 @@ class AIEngine:
 
     async def inquiry_single(self, material: dict) -> SearchResult:
         """
-        单项材料询价（三档降级链）
+        单项材料询价（四档降级链，统一出口 _finalize）
 
         返回 SearchResult，source 字段标识来源：
-          - "ai_knowledge"  : Agnes 知识推理（medium）
-          - "ai_websearch"  : DeepSeek 联网搜索（high）
-          - "ai_fallback"   : DeepSeek 知识兜底（low）
+          - "gldjc_ssr"     : 广材网 SSR 直抓（high，真实市场价）
+          - "ai_knowledge"  : Agnes 知识推理（medium，经云筑AI校准）
+          - "ai_websearch"  : DeepSeek 联网搜索（high，经云筑AI校准）
+          - "ai_fallback"   : DeepSeek 知识兜底（low，经云筑AI校准）
           - "failed"        : 全部失败
         """
         name = material.get("name", "").strip()
@@ -125,28 +132,114 @@ class AIEngine:
         qty_line = f"数量：{qty}\n" if qty else ""
         location_line = f"交货地点：{location}\n" if location else ""
 
-        # ---------- 第①档：Agnes 知识推理（免费主力） ----------
+        # ---------- 第①档：广材网 SSR 直抓（精确价+电话，不校准） ----------
+        try:
+            from plugins.gldjc_ssr import GldjcSSRPlugin
+            gldjc = GldjcSSRPlugin()
+            result = await gldjc.search(name, spec, supplier_count=self.supplier_count)
+            if result.success:
+                # P0-12: 广材网结果也走_finalize做单位换算（但不做云筑校准）
+                return await self._finalize(result, spec, location, user_unit=unit)
+        except Exception as e:
+            logger.warning(f"广材网查询失败，降级 AI: {e}")
+
+        # ---------- 第②档：Agnes 知识推理（免费主力） ----------
         result = await self._try_agnes(name, spec, unit, brand_line, qty_line, location_line)
         if result.success:
-            return result
+            return await self._finalize(result, spec, location, user_unit=unit)
 
-        # ---------- 第②档：DeepSeek 联网搜索（用户开启时） ----------
+        # ---------- 第③档：DeepSeek 知识兜底（P2调整：兜底优先，联网放最后） ----------
+        result = await self._try_deepseek_fallback(
+            name, spec, unit, brand_line, qty_line, location_line
+        )
+        if result.success:
+            return await self._finalize(result, spec, location, user_unit=unit)
+
+        # ---------- 第④档：DeepSeek 联网搜索（最后兜底，用户开启时） ----------
         if self.enable_web_search:
             result = await self._try_deepseek_websearch(
                 name, spec, unit, brand_line, qty_line, location_line
             )
             if result.success:
-                return result
-
-        # ---------- 第③档：DeepSeek 知识兜底 ----------
-        result = await self._try_deepseek_fallback(
-            name, spec, unit, brand_line, qty_line, location_line
-        )
-        if result.success:
-            return result
+                return await self._finalize(result, spec, location, user_unit=unit)
 
         # 全部失败
-        return SearchResult.failed("AI询价三档均失败", keyword=name)
+        return SearchResult.failed("AI询价四档均失败", keyword=name)
+
+    async def _finalize(self, result: SearchResult, spec: str = "", location: str = "",
+                        user_unit: str = "") -> SearchResult:
+        """
+        统一收尾出口：
+        1. 单位换算（P0-12: 广材网单位→用户单位）
+        2. 云筑AI 校准（按材料维度一次，P0-2）
+        3. 广材网精确价来源不校准（gldjc_ssr 已是真实价）
+        """
+        if result.source == "failed":
+            return result
+
+        # P0-12/P0-13: 单位换算（三态处理，fail保留原始单位）
+        if user_unit and result.suppliers:
+            from utils.unit_convert import convert_price
+            for s in result.suppliers:
+                if s.unit and s.unit != user_unit:
+                    # P0-14: 尺寸来源优先用广材网产品规格
+                    spec_for_convert = getattr(s, "spec_detail", "") or spec or ""
+                    new_price, note, status = convert_price(s.price, s.unit, user_unit, spec_for_convert)
+                    logger.info(f"[换算] {result.keyword}: {s.price}/{s.unit}→{user_unit} status={status} 新价={new_price} spec_detail=[{spec_for_convert[:60]}]")
+                    if status == "ok":
+                        # 换算成功：改价格+改单位+记过程
+                        s.unit_original = s.unit
+                        s.price = new_price
+                        s.unit = user_unit
+                        s.convert_note = note
+                    elif status == "fail":
+                        # P0-13②: 无法换算 → 保留原始单位和价格，只标注原因
+                        s.unit_original = s.unit
+                        s.convert_note = f"未换算：{note}"
+                        # 不改 s.unit 和 s.price
+                elif s.unit and s.unit == user_unit:
+                    pass  # 单位相同，无需换算
+                elif not s.unit:
+                    # 广材网返回的unit为空，补上用户单位
+                    s.unit = user_unit
+
+        if result.source == "gldjc_ssr":
+            return result  # 广材网精确价不做云筑校准
+
+        # P0-2：只取供应商均价做一次校准，不逐个调
+        prices = [s.price for s in result.suppliers if s.price and s.price > 0]
+        if not prices:
+            return result
+        avg_price = sum(prices) / len(prices)
+
+        try:
+            from plugins.yzw_calibrator import YzwCalibrator
+            calibrator = YzwCalibrator()
+            cal = await calibrator.calibrate(
+                price=avg_price,
+                name=result.keyword,
+                spec=spec,
+                region=location,
+            )
+        except Exception as e:
+            logger.warning(f"云筑AI校准异常，跳过: {e}")
+            return result
+
+        if cal["status"] == "revise":
+            # 修正比例统一应用到所有供应商（保持相对价差）
+            ratio = cal["price"] / avg_price
+            for s in result.suppliers:
+                if s.price > 0:
+                    s.price = round(s.price * ratio, 2)
+                s.confidence = cal["confidence"]
+                s.is_anomaly = True
+            logger.info(f"[校准] {result.keyword}: {cal.get('reason', '')}")
+        elif cal["status"] == "pass":
+            for s in result.suppliers:
+                s.confidence = "high"
+        # no_data：保持原样（confidence 不变）
+
+        return result
 
     async def inquiry_batch(
         self,
@@ -198,7 +291,7 @@ class AIEngine:
 
             # 项间间隔（最后一项不用等）
             if idx < total:
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(3)  # P0-2: 间隔1.5s→3s，避免Agnes限流
 
         if progress_callback:
             await progress_callback("all_done", {
@@ -224,9 +317,16 @@ class AIEngine:
             brand_line=brand_line, qty_line=qty_line, location_line=location_line,
         )
 
+        # P0-2: Agnes 失败重试1次（P0-10②: 退避5s→20s，限流窗口通常1分钟）
         raw = await call_llm("primary", prompt, _SYSTEM_PROMPT)
         if not raw:
-            logger.info(f"[{name}] Agnes 调用失败，准备降级")
+            logger.info(f"[{name}] Agnes 首次调用失败，20秒后用精简prompt重试...")
+            await asyncio.sleep(20)
+            # P0-10④: 重试用精简prompt（降reasoning消耗）
+            simple_prompt = _SIMPLE_PROMPT.format(name=name, spec=spec, unit_str=unit or "元", supplier_count=self.supplier_count)
+            raw = await call_llm("primary", simple_prompt, _SYSTEM_PROMPT)
+        if not raw:
+            logger.info(f"[{name}] Agnes 重试仍失败，准备降级")
             return SearchResult(source="ai_knowledge", keyword=name, spec=spec,
                                 material_unit=unit, error_message="Agnes调用失败")
 
@@ -284,13 +384,21 @@ class AIEngine:
             brand_line=brand_line, qty_line=qty_line, location_line=location_line,
         )
 
+        # P0-10③: DeepSeek 兜底也加重试1次（精简prompt）
         raw = await call_llm("fallback", prompt, _SYSTEM_PROMPT)
         if not raw:
+            logger.info(f"[{name}] DeepSeek 兜底首次失败，10秒后用精简prompt重试...")
+            await asyncio.sleep(10)
+            simple_prompt = _SIMPLE_PROMPT.format(name=name, spec=spec, unit_str=unit or "元", supplier_count=self.supplier_count)
+            raw = await call_llm("fallback", simple_prompt, _SYSTEM_PROMPT)
+        if not raw:
+            logger.warning(f"[{name}] DeepSeek 知识兜底失败：API返回空或异常（查看上方extractor日志）")
             return SearchResult(source="ai_fallback", keyword=name, spec=spec,
                                 material_unit=unit, error_message="DeepSeek兜底失败")
 
         suppliers = self._parse_suppliers(raw, default_confidence="low")
         if not suppliers:
+            logger.warning(f"[{name}] DeepSeek 知识兜底：API返回了内容但解析出0家供应商")
             return SearchResult(source="ai_fallback", keyword=name, spec=spec,
                                 material_unit=unit, error_message="DeepSeek兜底无结果")
 
@@ -330,6 +438,7 @@ class AIEngine:
             data = [data]
 
         suppliers = []
+        seen = set()  # P0-11④: AI返回供应商去重
         for item in data:
             if not isinstance(item, dict):
                 continue
@@ -341,8 +450,14 @@ class AIEngine:
             if price <= 0:
                 continue
 
+            # P0-11④: 按供应商名去重
+            sup_name = item.get("supplier", "未知供应商").strip()
+            if sup_name in seen:
+                continue
+            seen.add(sup_name)
+
             suppliers.append(SupplierInfo(
-                supplier=item.get("supplier", "未知供应商"),
+                supplier=sup_name,
                 price=price,
                 unit=item.get("unit", ""),
                 phone=self._clean_phone(item.get("phone", "")),

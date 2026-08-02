@@ -20,6 +20,11 @@ class SupplierInfo:
     product_title: str = "" # 产品标题（精简后）
     confidence: str = "medium"  # high / medium / low
     is_anomaly: bool = False    # 是否价格异常
+    # P0-12: 单位换算相关
+    unit_original: str = ""     # 原始单位（广材网返回的，换算前的）
+    convert_note: str = ""      # 换算过程备注（如"10元/块 ÷ 0.8m ÷ 0.8m = 15.63元/m²"）
+    # P0-14: 产品规格详情（广材网返回的完整规格串，用于换算尺寸解析）
+    spec_detail: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -30,13 +35,16 @@ class SupplierInfo:
             "product_title": self.product_title,
             "confidence": self.confidence,
             "is_anomaly": self.is_anomaly,
+            "unit_original": self.unit_original,
+            "convert_note": self.convert_note,
+            "spec_detail": self.spec_detail,
         }
 
 
 @dataclass
 class SearchResult:
     """一次搜索的结构化结果"""
-    source: str             # 来源平台：1688 / mysteel / gldjc / ai_fallback
+    source: str             # 来源平台：gldjc_ssr / ai_knowledge / ai_websearch / ai_fallback / failed
     keyword: str            # 搜索关键词
     spec: str = ""          # 规格参数
     material_unit: str = "" # 材料单位（如 株、吨、m²）
@@ -81,51 +89,17 @@ class SearchResult:
 
 
 # ============================================================
-# 材料路由规则
+# 材料路由规则（v5.2：1688 已移除，广材网SSR + AI推理）
 # ============================================================
 
-ROUTING_RULES = {
-    "mysteel": {
-        "keywords": [
-            "钢筋", "螺纹钢", "盘螺", "线材", "圆钢", "型钢", "钢板",
-            "钢管", "H型钢", "工字钢", "槽钢", "角钢", "扁钢", "方钢",
-            "钢结构", "不锈钢", "钢绞线", "钢丝", "钢格板", "镀锌",
-        ],
-        "priority": 1,
-    },
-    "gldjc": {
-        "keywords": [
-            "水泥", "混凝土", "砂浆", "砂", "石", "砖", "砌块",
-            "防水", "保温", "涂料", "油漆", "门窗", "玻璃",
-            "管材", "管件", "电缆", "电线", "桥架", "开关", "插座",
-            "瓷砖", "石材", "地板", "吊顶", "卫浴", "阀门",
-            "泵", "风机", "空调", "消防", "报警", "监控",
-        ],
-        "priority": 2,
-    },
-}
+# 数据源优先级
+PLATFORM_PRIORITY = [
+    "gldjc_ssr",        # ① 广材网 SSR（精确价+电话）
+    "ai_knowledge",     # ② AI 知识推理（Agnes 主力）
+    "ai_websearch",     # ③ DeepSeek 联网（可选）
+]
 
 
-def route_material(material_name: str) -> str:
-    """根据材料名称返回目标平台"""
-    name = material_name.lower()
-
-    for kw in ROUTING_RULES["mysteel"]["keywords"]:
-        if kw in name:
-            return "mysteel"
-
-    for kw in ROUTING_RULES["gldjc"]["keywords"]:
-        if kw in name:
-            return "gldjc"
-
-    return "gldjc"  # 默认走广材网
-
-
-def get_fallback_chain(platform: str) -> list:
-    """返回指定平台的降级链（广材网优先，钢材→钢铁网，1688最后）"""
-    order = {
-        "mysteel": ["mysteel", "gldjc", "1688"],   # 钢材：钢铁网→广材网→1688
-        "gldjc":   ["gldjc", "mysteel", "1688"],    # 通用：广材网→钢铁网→1688
-        "1688":    ["gldjc", "mysteel", "1688"],     # 特殊：也先试广材网→钢铁网→1688
-    }
-    return order.get(platform, ["gldjc", "mysteel", "1688"])
+def get_fallback_chain() -> list:
+    """返回降级链（v5.2：统一链路，不再按平台分）"""
+    return PLATFORM_PRIORITY

@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>登录管理 — 智能询价</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Microsoft YaHei', sans-serif; background: #f0f2f5; color: #1d2b3a; padding: 20px; }
+.container { max-width: 100%; margin: 0; }
+.card { background: #fff; border-radius: 10px; padding: 24px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+.card-title { font-size: 15px; font-weight: bold; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+.card-title .tag {
+  font-size: 11px; padding: 2px 10px; border-radius: 10px; font-weight: normal;
+}
+.tag.ok { background: #d4edda; color: #155724; }
+.tag.no { background: #f8d7da; color: #721c24; }
+.tag.warn { background: #fff3cd; color: #856404; }
+.platform-info { font-size: 13px; color: #667; margin-bottom: 12px; line-height: 1.6; }
+.platform-info code { background: #f1f5f9; padding: 1px 6px; border-radius: 3px; font-size: 12px; }
+.actions { display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+.btn {
+  background: #667eea; color: #fff; border: none; padding: 8px 20px;
+  border-radius: 6px; font-size: 13px; cursor: pointer; transition: all .2s;
+}
+.btn:hover { background: #5568d3; }
+.btn:disabled { background: #cbd5e0; cursor: not-allowed; }
+.btn-secondary { background: #fff; color: #667eea; border: 1px solid #667eea; }
+.btn-success { background: #28a745; }
+.btn-success:hover { background: #218838; }
+.btn-warning { background: #ffc107; color: #333; }
+.result-msg { margin-top: 10px; padding: 8px 12px; border-radius: 6px; font-size: 13px; display: none; }
+.result-msg.ok { background: #d4edda; color: #155724; display: block; }
+.result-msg.err { background: #f8d7da; color: #721c24; display: block; }
+.result-msg.info { background: #d1ecf1; color: #0c5460; display: block; }
+.status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+.status-item { background: #f7fafc; border-radius: 8px; padding: 14px; }
+.status-item .label { font-size: 12px; color: #888; }
+.status-item .value { font-size: 15px; font-weight: bold; margin-top: 3px; }
+.status-item .value.ok { color: #28a745; }
+.status-item .value.no { color: #dc3545; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="card">
+    <div class="card-title">🔑 登录态概览</div>
+    <div class="status-grid">
+      <div class="status-item">
+        <div class="label">广材网 (gldjc.com)</div>
+        <div class="value" id="gldjcStatus">检查中...</div>
+        <div class="label" id="gldjcCookies" style="margin-top:4px;"></div>
+      </div>
+      <div class="status-item">
+        <div class="label">云筑网 (yzw.cn)</div>
+        <div class="value" id="yzwStatus">检查中...</div>
+        <div class="label" id="yzwCookies" style="margin-top:4px;"></div>
+      </div>
+    </div>
+    <button class="btn-secondary btn" onclick="checkStatus()">🔄 刷新状态</button>
+  </div>
+
+  <!-- 广材网 -->
+  <div class="card">
+    <div class="card-title">
+      广材网登录
+      <span class="tag" id="gldjcTag">未检查</span>
+    </div>
+    <div class="platform-info">
+      广材网是 Nuxt SSR 架构，登录后用 cookie + httpx 直抓价格和供应商电话。<br>
+      Cookie 文件：<code>accounts/gldjc_cookies.json</code>
+    </div>
+    <div class="actions">
+      <button class="btn btn-warning" onclick="openBrowser('gldjc')">🌐 打开浏览器登录</button>
+      <button class="btn btn-success" onclick="saveCookies('gldjc')">💾 提取Cookie保存</button>
+      <button class="btn-secondary btn" onclick="checkStatus()">🔄 重新检查</button>
+    </div>
+    <div id="gldjcMsg" class="result-msg"></div>
+  </div>
+
+  <!-- 云筑网 -->
+  <div class="card">
+    <div class="card-title">
+      云筑网登录
+      <span class="tag" id="yzwTag">未检查</span>
+    </div>
+    <div class="platform-info">
+      云筑网 AI 助手用于价格校准，登录后可免费查询材料价格区间。<br>
+      Cookie 文件：<code>accounts/yzw_cookies.json</code>
+    </div>
+    <div class="actions">
+      <button class="btn btn-warning" onclick="openBrowser('yzw')">🌐 打开浏览器登录</button>
+      <button class="btn btn-success" onclick="saveCookies('yzw')">💾 提取Cookie保存</button>
+      <button class="btn-secondary btn" onclick="checkStatus()">🔄 重新检查</button>
+    </div>
+    <div id="yzwMsg" class="result-msg"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">📋 使用说明</div>
+    <div class="platform-info" style="line-height:2;">
+      1. 点击「打开浏览器登录」→ 系统会启动 Chrome 并打开平台首页<br>
+      2. 在弹出的浏览器中手动登录（建议勾选"记住我"）<br>
+      3. 登录成功后，浏览几个页面确保登录态生效<br>
+      4. 回到本页面点击「提取Cookie保存」→ 系统从 CDP 导出 cookie 存入文件<br>
+      5. 点击「刷新状态」确认登录态有效<br>
+      <br>
+      <b>注意</b>：Cookie 会过期，建议每周检查一次。失效后重复上述步骤。
+    </div>
+  </div>
+</div>
+
+<script>
+async function checkStatus() {
+  try {
+    const res = await fetch('/api/login-status');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    // 广材网
+    const gldjc = data.gldjc || {};
+    const gEl = document.getElementById('gldjcStatus');
+    if (gEl) {
+      gEl.textContent = gldjc.valid ? '✅ 已登录' : '❌ 未登录';
+      gEl.className = 'value ' + (gldjc.valid ? 'ok' : 'no');
+    }
+    const gcEl = document.getElementById('gldjcCookies');
+    if (gcEl) gcEl.textContent = gldjc.cookie_count != null ? `${gldjc.cookie_count} 个 cookie` : (gldjc.error || '');
+    const gTag = document.getElementById('gldjcTag');
+    if (gTag) {
+      gTag.textContent = gldjc.valid ? '已登录' : '未登录';
+      gTag.className = 'tag ' + (gldjc.valid ? 'ok' : 'no');
+    }
+    // 云筑网
+    const yzw = data.yzw || {};
+    const yEl = document.getElementById('yzwStatus');
+    if (yEl) {
+      yEl.textContent = yzw.valid ? '✅ 已登录' : '❌ 未登录';
+      yEl.className = 'value ' + (yzw.valid ? 'ok' : 'no');
+    }
+    const ycEl = document.getElementById('yzwCookies');
+    if (ycEl) ycEl.textContent = yzw.cookie_count != null ? `${yzw.cookie_count} 个 cookie` : (yzw.error || '');
+    const yTag = document.getElementById('yzwTag');
+    if (yTag) {
+      yTag.textContent = yzw.valid ? '已登录' : '未登录';
+      yTag.className = 'tag ' + (yzw.valid ? 'ok' : 'no');
+    }
+  } catch (e) {
+    console.error('checkStatus error:', e);
+  }
+}
+
+async function openBrowser(platform) {
+  const name = platform === 'gldjc' ? '广材网' : '云筑网';
+  const msgId = platform + 'Msg';
+  showMsg(msgId, 'info', `正在打开${name}登录页...`);
+  try {
+    const res = await fetch(`/api/login/${platform}`, { method: 'POST' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data.success) {
+      showMsg(msgId, 'ok', data.message);
+    } else {
+      showMsg(msgId, 'err', data.error || '启动失败');
+    }
+  } catch (e) {
+    showMsg(msgId, 'err', '请求失败: ' + e.message);
+  }
+}
+
+async function saveCookies(platform) {
+  const name = platform === 'gldjc' ? '广材网' : '云筑网';
+  const msgId = platform + 'Msg';
+  showMsg(msgId, 'info', `正在从浏览器提取${name} cookie...`);
+  try {
+    const res = await fetch(`/api/login/${platform}/save`, { method: 'POST' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data.success) {
+      showMsg(msgId, 'ok', data.message);
+      setTimeout(checkStatus, 1000);
+    } else {
+      showMsg(msgId, 'err', data.error || '提取失败');
+    }
+  } catch (e) {
+    showMsg(msgId, 'err', '请求失败: ' + e.message);
+  }
+}
+
+function showMsg(id, type, msg) {
+  const el = document.getElementById(id);
+  el.className = 'result-msg ' + type;
+  el.textContent = msg;
+}
+
+// 页面加载时检查
+checkStatus();
+</script>
+</body>
+</html>

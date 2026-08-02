@@ -28,3 +28,12 @@ inquire-agent/logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# 浏览器profile（含登录态，不能提交）
+.browser-profile*/
+inquire-agent/.browser-profile*/
+
+# 账号cookie（敏感信息）
+accounts/
+inquire-agent/accounts/
+

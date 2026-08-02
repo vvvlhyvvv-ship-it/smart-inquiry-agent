@@ -29,7 +29,7 @@ _DEFAULT_FALLBACK = {
     "api_key": os.getenv("DEEPSEEK_API_KEY", ""),
 }
 _DEFAULT_TEMPERATURE = 0.1
-_DEFAULT_MAX_TOKENS = 2000
+_DEFAULT_MAX_TOKENS = 4000  # P0-10①: 2000→4000，推理模型thinking+text总消耗更高
 
 # 运行时配置（可被 reload_llm_config() 更新）
 LLM_CONFIG = {
@@ -132,7 +132,25 @@ async def call_llm(provider: str, prompt: str, system_prompt: str = "") -> Optio
             },
         )
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        content = resp.json()["choices"][0]["message"]["content"]
+        # P1-10: API成功但返回空字符串时也打日志
+        if not content or not content.strip():
+            logger.warning(f"LLM ({provider}) 返回了空字符串（HTTP {resp.status_code}）")
+            return None
+        return content
+    except httpx.HTTPStatusError as e:
+        # P0-2: 记录具体HTTP错误（限流/超时/key失效）
+        status = e.response.status_code
+        body = ""
+        try:
+            body = e.response.text[:200]
+        except Exception:
+            pass
+        logger.error(f"LLM ({provider}) HTTP {status}: {body}")
+        return None
+    except httpx.TimeoutException:
+        logger.error(f"LLM ({provider}) 请求超时")
+        return None
     except Exception as e:
-        logger.error(f"LLM ({provider}) 调用失败: {e}")
+        logger.error(f"LLM ({provider}) 调用失败: {type(e).__name__}: {e}")
         return None
