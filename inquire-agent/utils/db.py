@@ -41,7 +41,6 @@ CREATE TABLE IF NOT EXISTS inquiry_tasks (
     user_id INTEGER DEFAULT 1,
     material_count INTEGER,
     completed_count INTEGER DEFAULT 0,
-    total_beans INTEGER,
     status TEXT DEFAULT 'running',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     completed_at TIMESTAMP
@@ -57,31 +56,6 @@ CREATE TABLE IF NOT EXISTS material_aliases (
 CREATE TABLE IF NOT EXISTS llm_config (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL DEFAULT ''
-);
-
-CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    nickname TEXT DEFAULT '微信用户',
-    avatar TEXT DEFAULT '',
-    beans INTEGER DEFAULT 100,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS beans_pricing (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    package_name TEXT NOT NULL,
-    bean_count INTEGER NOT NULL,
-    price_cents INTEGER NOT NULL,
-    is_active INTEGER DEFAULT 1
-);
-
-CREATE TABLE IF NOT EXISTS bean_transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT NOT NULL,
-    amount INTEGER NOT NULL,
-    task_id TEXT DEFAULT '',
-    description TEXT DEFAULT '',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- v5.1 大平台接入改造：项目表
@@ -184,12 +158,12 @@ def save_price_record(**kwargs):
     _write_queue.put((sql, params))
 
 
-def save_task(task_id: str, material_count: int, total_beans: int = 0):
+def save_task(task_id: str, material_count: int):
     """创建询价任务记录"""
     sql = """INSERT OR REPLACE INTO inquiry_tasks
-        (task_id, material_count, total_beans, status)
-        VALUES (?, ?, ?, 'running')"""
-    _write_queue.put((sql, (task_id, material_count, total_beans)))
+        (task_id, material_count, status)
+        VALUES (?, ?, 'running')"""
+    _write_queue.put((sql, (task_id, material_count)))
 
 
 def update_task_status(task_id: str, status: str, completed_count: int = None):
@@ -310,116 +284,3 @@ def list_projects() -> list:
         return [{"id": r[0], "name": r[1], "type": r[2], "region": r[3], "budget": r[4]} for r in rows]
     finally:
         conn.close()
-
-
-# ==================== 用户操作 ====================
-
-def get_user(user_id: str) -> dict:
-    """获取用户信息，不存在则创建默认用户"""
-    _ensure_db_dir()
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
-    try:
-        row = conn.execute("SELECT id, nickname, avatar, beans FROM users WHERE id = ?", (user_id,)).fetchone()
-        if row:
-            return {"id": row[0], "nickname": row[1], "avatar": row[2], "beans": row[3]}
-        # 新用户：创建并赠送100豆
-        conn.execute("INSERT INTO users (id, nickname, beans) VALUES (?, '微信用户', 100)", (user_id,))
-        conn.commit()
-        return {"id": user_id, "nickname": "微信用户", "avatar": "", "beans": 100}
-    finally:
-        conn.close()
-
-
-def update_user(user_id: str, nickname: str = None, avatar: str = None):
-    """更新用户昵称/头像"""
-    _ensure_db_dir()
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    try:
-        if nickname:
-            conn.execute("UPDATE users SET nickname = ? WHERE id = ?", (nickname, user_id))
-        if avatar:
-            conn.execute("UPDATE users SET avatar = ? WHERE id = ?", (avatar, user_id))
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def deduct_beans(user_id: str, amount: int, task_id: str = "", description: str = "") -> bool:
-    """扣减询价豆，返回是否成功"""
-    _ensure_db_dir()
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    try:
-        cur = conn.execute("SELECT beans FROM users WHERE id = ?", (user_id,))
-        row = cur.fetchone()
-        if not row or row[0] < amount:
-            return False
-        conn.execute("UPDATE users SET beans = beans - ? WHERE id = ?", (amount, user_id))
-        conn.execute(
-            "INSERT INTO bean_transactions (user_id, amount, task_id, description) VALUES (?, ?, ?, ?)",
-            (user_id, -amount, task_id, description),
-        )
-        conn.commit()
-        return True
-    finally:
-        conn.close()
-
-
-def add_beans(user_id: str, amount: int, description: str = "") -> int:
-    """充值询价豆，返回新余额"""
-    _ensure_db_dir()
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    try:
-        conn.execute("UPDATE users SET beans = beans + ? WHERE id = ?", (amount, user_id))
-        conn.execute(
-            "INSERT INTO bean_transactions (user_id, amount, description) VALUES (?, ?, ?)",
-            (user_id, amount, description),
-        )
-        conn.commit()
-        row = conn.execute("SELECT beans FROM users WHERE id = ?", (user_id,)).fetchone()
-        return row[0] if row else 0
-    finally:
-        conn.close()
-
-
-# ==================== 询价豆定价 ====================
-
-def get_beans_pricing() -> list:
-    """获取所有激活的定价方案"""
-    _ensure_db_dir()
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    try:
-        rows = conn.execute(
-            "SELECT id, package_name, bean_count, price_cents FROM beans_pricing WHERE is_active = 1 ORDER BY bean_count"
-        ).fetchall()
-        return [{"id": r[0], "name": r[1], "beans": r[2], "price_cents": r[3]} for r in rows]
-    finally:
-        conn.close()
-
-
-def save_beans_pricing(packages: list):
-    """全量替换定价方案（管理员操作）"""
-    _ensure_db_dir()
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    try:
-        conn.execute("DELETE FROM beans_pricing")
-        for pkg in packages:
-            conn.execute(
-                "INSERT INTO beans_pricing (package_name, bean_count, price_cents) VALUES (?, ?, ?)",
-                (pkg["name"], pkg["beans"], pkg["price_cents"]),
-            )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def init_default_pricing():
-    """初始化默认定价方案"""
-    existing = get_beans_pricing()
-    if not existing:
-        save_beans_pricing([
-            {"name": "100询价豆", "beans": 100, "price_cents": 990},
-            {"name": "500询价豆", "beans": 500, "price_cents": 3990},
-            {"name": "1000询价豆", "beans": 1000, "price_cents": 6990},
-        ])
-        logger.info("💰 默认询价豆定价已初始化")

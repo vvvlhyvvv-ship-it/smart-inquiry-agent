@@ -1,11 +1,32 @@
 """
-main.py — 智能询价 Agent v5.0 入口
+main.py — 智能询价助手 V5.2 入口
 
-v5.0 核心变化：
-- 砍掉 Playwright 爬虫、微信登录、询价豆、管理员后台
-- 核心：上传Excel → AI询价（Agnes+DeepSeek）→ 下载报告 → 回填核实
-- 新增 /api/status/{id} 轮询接口（替代 SSE）
-- 新增 /api/verify 回填核实接口（数据飞轮起点）
+============================================================================
+⚠️ main.py 扩展规则（V5.2 起执行，避免文件膨胀）
+----------------------------------------------------------------------------
+main.py 只留三类代码：
+  ① 应用启动/配置（FastAPI 实例、CORS、lifespan、_PLATFORMS 等模块级常量）
+  ② 静态页面路由（/、/config.html、/login.html、/admin.html）
+  ③ 现有核心询价业务（upload/preview/start/status/cancel/result/download/verify
+     及 _run_inquiry、_generate_ai_summary 等配套函数）
+
+新需求按业务域新建文件，不要往 main.py 塞：
+  - 新路由模块 → routers/xxx.py（用 FastAPI APIRouter 挂载）
+  - 大平台适配层 → adapters/xxx.py（字段映射/回调/鉴权等平台特定逻辑）
+  - 新业务工具 → utils/xxx.py 或 core/xxx.py
+
+大平台接入（v1 接口）是平台无关的协议层，接入第二个大平台无需改 main.py 核心：
+直接复用现有 /api/v1/* 接口；平台特定差异进 adapters/。
+============================================================================
+
+V5.2 变化：
+- 品牌名：智能询价 Agent → 智能询价助手
+- 代码精简：删除询价豆死代码、合并 source_label/_PLATFORMS 重复定义（净减约200行）
+- v5.0 核心变化：
+  - 砍掉 Playwright 爬虫、微信登录、询价豆、管理员后台
+  - 核心：上传Excel → AI询价（Agnes+DeepSeek）→ 下载报告 → 回填核实
+  - 新增 /api/status/{id} 轮询接口（替代 SSE）
+  - 新增 /api/verify 回填核实接口（数据飞轮起点）
 """
 
 import os
@@ -27,14 +48,20 @@ from core.material_parser import (
     TEMPLATE_COLUMNS,
 )
 from core.report import generate_excel_report
-from core.router import SearchResult
+from core.router import SearchResult, SOURCE_LABEL
 from utils.logger import get_logger
 from utils.config import PORT
 from utils.db import save_task, update_task_status, stop_db_writer
 
 logger = get_logger(__name__)
 
-app = FastAPI(title="智能询价 Agent v5.0")
+# 登录管理平台元数据（trigger_login 用 url，save_login_cookies 用 domain+file）
+_PLATFORMS = {
+    "gldjc": {"name": "广材网", "url": "https://www.gldjc.com/", "domain": "gldjc.com", "file": "accounts/gldjc_cookies.json"},
+    "yzw":   {"name": "云筑网", "url": "https://ai.yzw.cn/", "domain": "yzw.cn", "file": "accounts/yzw_cookies.json"},
+}
+
+app = FastAPI(title="智能询价助手 V5.2")
 
 # CORS
 app.add_middleware(
@@ -89,7 +116,7 @@ async def index():
     index_path = os.path.join(web_dir, "index.html")
     if os.path.exists(index_path):
         return _nocache_file(index_path)
-    return {"message": "智能询价 Agent v5.0 API"}
+    return {"message": "智能询价助手 V5.2 API"}
 
 
 @app.get("/result.html")
@@ -112,12 +139,7 @@ async def upload_excel(file: UploadFile = File(...)):
     with open(file_path, "wb") as f:
         f.write(content)
 
-    columns = get_column_names(file_path)
-
-    import openpyxl
-    wb = openpyxl.load_workbook(file_path)
-    row_count = wb.active.max_row - 1
-    wb.close()
+    columns, row_count = get_column_names(file_path, with_row_count=True)
 
     # 自动映射
     auto_mapping = auto_map_columns(columns)
@@ -396,12 +418,7 @@ async def get_result(task_id: str):
     # 置信度统计
     conf_counts = {"high": 0, "medium": 0, "low": 0}
     source_counts = {}
-    source_label = {
-        "gldjc_ssr":     "广材网",
-        "ai_knowledge":  "AI知识推理",
-        "ai_websearch":  "AI联网搜索",
-        "ai_fallback":   "AI知识兜底",
-    }
+    source_label = SOURCE_LABEL
     # 构建明细列表（供前端展示）
     items = []
     for r in results:
@@ -547,26 +564,34 @@ async def verify_prices(data: dict):
     results = task["results"]
     updated = 0
 
-    # 构建 核实信息 查找表（按材料名匹配）
-    verify_map = {v.get("material_name", "").strip(): v for v in verifications}
+    # 构建核实信息查找表：key = (material_name, supplier)，支持同材料多家供应商各自回填
+    # 注意：不能用 material_name 当 key，否则同材料 3 家会互相覆盖只剩 1 家
+    verify_map = {}
+    for v in verifications:
+        key = (v.get("material_name", "").strip(), v.get("supplier", "").strip())
+        verify_map[key] = v
 
     for r in results:
         name = r.keyword.strip()
-        if name in verify_map:
-            v = verify_map[name]
-            r.verified = True
-            r.verified_price = v.get("verified_price")
-            r.verified_note = v.get("verified_note", "")
-            # 更新供应商电话（如提供）
+        # 该材料下的供应商，逐家匹配核实数据
+        # 核实价下沉到供应商级（s.verified_price），不再用材料级 r.verified_price 单值
+        matched_any = False
+        for s in (r.suppliers or []):
+            sname = (s.supplier or "").strip()
+            key = (name, sname)
+            v = verify_map.get(key)
+            if not v:
+                continue
+            matched_any = True
+            r.verified = True  # 材料级"已核实"标志
+            s.verified_price = v.get("verified_price")  # 供应商级核实价
+            s.verified_note = v.get("verified_note", "")
+            # 更新该供应商电话（如提供）
             phone = v.get("phone", "")
-            supplier_name = v.get("supplier", "")
-            if phone and r.suppliers:
-                for s in r.suppliers:
-                    if not supplier_name or s.supplier == supplier_name:
-                        s.phone = phone
-            updated += 1
+            if phone:
+                s.phone = phone
 
-            # 存入数据库（积累真实成交价 + 项目信息）
+            # 每家供应商各存一条价格记录（积累真实成交价 + 项目信息）
             try:
                 from utils.db import save_price_record
                 project_info = task.get("project_info", {})
@@ -574,7 +599,7 @@ async def verify_prices(data: dict):
                     material_name=name,
                     material_spec=r.spec,
                     material_unit=r.material_unit,
-                    supplier=supplier_name or (r.suppliers[0].supplier if r.suppliers else ""),
+                    supplier=sname,
                     supplier_phone=phone,
                     price=float(v.get("verified_price", 0) or 0),
                     price_unit=r.material_unit,
@@ -588,7 +613,9 @@ async def verify_prices(data: dict):
                     procurement_type=project_info.get("procurement_type", ""),
                 )
             except Exception as e:
-                logger.warning(f"核实价入库失败: {name} - {e}")
+                logger.warning(f"核实价入库失败: {name}/{sname} - {e}")
+        if matched_any:
+            updated += 1
 
     logger.info(f"📝 回填核实: task={task_id}, 更新{updated}项")
     return {
@@ -805,14 +832,10 @@ async def trigger_login(platform: str):
     import subprocess
     import threading
 
-    PLATFORM_MAP = {
-        "gldjc": {"name": "广材网", "url": "https://www.gldjc.com/"},
-        "yzw": {"name": "云筑网", "url": "https://ai.yzw.cn/"},
-    }
-    if platform not in PLATFORM_MAP:
+    if platform not in _PLATFORMS:
         return JSONResponse({"error": f"未知平台: {platform}"}, status_code=400)
 
-    cfg = PLATFORM_MAP[platform]
+    cfg = _PLATFORMS[platform]
 
     # v5.2：用 Playwright 持久化 profile 打开浏览器登录
     # 后台启动 Playwright 浏览器，用户登录后 profile 自动保存
@@ -898,14 +921,10 @@ async def save_login_cookies(platform: str):
     """从 Playwright profile 提取 cookie 并保存到 accounts/ 目录"""
     import json as _json
 
-    PLATFORM_MAP = {
-        "gldjc": {"name": "广材网", "domain": "gldjc.com", "file": "accounts/gldjc_cookies.json"},
-        "yzw": {"name": "云筑网", "domain": "yzw.cn", "file": "accounts/yzw_cookies.json"},
-    }
-    if platform not in PLATFORM_MAP:
+    if platform not in _PLATFORMS:
         return JSONResponse({"error": f"未知平台: {platform}"}, status_code=400)
 
-    cfg = PLATFORM_MAP[platform]
+    cfg = _PLATFORMS[platform]
 
     # v5.2：优先从内存中的登录浏览器实例提取 cookie（即时），否则从 profile 提取
     import asyncio as _aio
@@ -988,19 +1007,6 @@ async def admin_page():
 # ============================================================
 # 10. v5.1 大平台接入：API v1 前缀重定向（向后兼容）
 # ============================================================
-
-_V1_MAP = {
-    "/api/upload": ("POST", "/api/v1/inquiry/upload"),
-    "/api/preview": ("POST", "/api/v1/inquiry/preview"),
-    "/api/start": ("POST", "/api/v1/inquiry/start"),
-    "/api/cancel": ("POST", "/api/v1/inquiry/cancel"),
-    "/api/verify": ("POST", "/api/v1/inquiry/verify"),
-}
-_V1_GET_MAP = {
-    "/api/status": "/api/v1/inquiry/status",
-    "/api/result": "/api/v1/inquiry/result",
-    "/api/download": "/api/v1/inquiry/download",
-}
 
 
 @app.api_route("/api/v1/inquiry/upload", methods=["POST"])
@@ -1110,6 +1116,38 @@ async def price_search(
 
 
 # ============================================================
+# 12. 历史价格查询（供前端历史页使用，复用大平台数据层）
+# ============================================================
+
+@app.get("/api/history/prices")
+async def history_prices(
+    material_name: str = None,
+    region: str = None,
+    project_type: str = None,
+    start_date: str = None,
+    end_date: str = None,
+    limit: int = 200,
+):
+    """历史价格列表（前端历史页用）。默认按时间倒序返回最近N条核实过的价格。"""
+    from utils.db import query_price_records
+    limit = min(max(limit, 1), 1000)  # 钳制 1-1000，防止前端传超大值
+    records = query_price_records(
+        material_name=material_name, region=region, project_type=project_type,
+        start_date=start_date, end_date=end_date, limit=limit,
+    )
+    return {"count": len(records), "records": records}
+
+
+@app.get("/history.html")
+async def history_page():
+    """历史价格页"""
+    history_path = os.path.join(os.path.dirname(__file__), "web", "history.html")
+    if os.path.exists(history_path):
+        return _nocache_file(history_path)
+    return JSONResponse({"error": "history.html not found"}, status_code=404)
+
+
+# ============================================================
 # 生命周期 + 启动
 # ============================================================
 
@@ -1120,7 +1158,7 @@ from contextlib import asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     logger.info("=" * 50)
-    logger.info("🚀 智能询价 Agent v5.0 启动中...")
+    logger.info("🚀 智能询价助手 V5.2 启动中...")
 
     os.makedirs("data/images", exist_ok=True)
     os.makedirs("data/templates", exist_ok=True)

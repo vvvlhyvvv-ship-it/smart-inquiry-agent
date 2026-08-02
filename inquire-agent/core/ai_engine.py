@@ -1,5 +1,5 @@
 """
-core/ai_engine.py — AI 询价核心引擎（v5.0）
+core/ai_engine.py — AI 询价核心引擎（V5.2）
 
 替代 v4.0 的 Playwright 爬虫方案。
 通过 LLM 知识推理 + 联网搜索聚合材料价格。
@@ -467,22 +467,6 @@ class AIEngine:
             ))
 
         return suppliers
-
-    def _cross_validate_with_history(self, result: SearchResult) -> str:
-        """
-        与历史数据库交叉验证，调整置信度
-
-        返回最终置信度：high / medium / low
-        - 查历史库同材料近90天核实价
-        - 偏离 >15% → 降一级
-        """
-        # MVP 阶段简化：暂不做历史校验，直接返回原置信度
-        # Phase 2 接入 trend_analyzer 后再实现
-        if not result.suppliers:
-            return "low"
-        # 取最高的置信度
-        priority = {"high": 3, "medium": 2, "low": 1}
-        return max(result.suppliers, key=lambda s: priority.get(s.confidence, 0)).confidence
 
     @staticmethod
     def _clean_phone(phone: str) -> str:

@@ -1,5 +1,5 @@
 """
-core/report.py — v5.0 询价报告生成（Excel）
+core/report.py — V5.2 询价报告生成（Excel）
 
 v5.0 关键变化：
 - 分层输出：草稿报告（行情参考价）/ 正式报告（成交价）
@@ -15,7 +15,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from datetime import datetime
 from typing import List, Optional
-from core.router import SearchResult
+from core.router import SearchResult, SOURCE_LABEL
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -153,13 +153,7 @@ def _write_data(ws, results: List[SearchResult], report_type: str, start_row: in
     material_seq = 0
 
     # 来源标签映射
-    source_label = {
-        "gldjc_ssr":     "广材网",
-        "ai_knowledge":  "AI知识推理",
-        "ai_websearch":  "AI联网搜索",
-        "ai_fallback":   "AI知识兜底",
-        "verified":      "人工核实",
-    }
+    source_label = SOURCE_LABEL
 
     for result in results:
         if not result.success or not result.suppliers:
@@ -181,16 +175,15 @@ def _write_data(ws, results: List[SearchResult], report_type: str, start_row: in
         material_seq += 1
         start_merge = row_idx
         suppliers = result.suppliers
-        # 取第一条的核实信息（同材料共享）
-        verified = getattr(result, "verified", False)
-        verified_price = getattr(result, "verified_price", None)
-        verified_note = getattr(result, "verified_note", "")
 
         for s in suppliers:
             sd = s.to_dict() if hasattr(s, "to_dict") else s
 
             # P0-12: 表头改为12列（含原始单位、换算过程）
             if report_type == "formal":
+                # 核实价已下沉到供应商级：有则用核实价，无则回退原 AI 建议价
+                v_price = sd.get("verified_price")
+                display_price = v_price if v_price is not None else sd.get("price", 0)
                 values = [
                     material_seq,
                     result.keyword,
@@ -198,7 +191,7 @@ def _write_data(ws, results: List[SearchResult], report_type: str, start_row: in
                     result.material_unit or sd.get("unit", "").replace("元/", ""),
                     sd.get("supplier", ""),
                     sd.get("phone", ""),
-                    verified_price if verified else sd.get("price", 0),
+                    display_price,
                     sd.get("unit", ""),
                     sd.get("unit_original", ""),
                     sd.get("convert_note", ""),
@@ -283,12 +276,7 @@ def _write_summary(ws, results, project_name, report_type, ai_summary):
             conf = sd.get("confidence", "medium")
             conf_counts[conf] = conf_counts.get(conf, 0) + 1
 
-    source_label = {
-        "gldjc_ssr":     "广材网",
-        "ai_knowledge":  "AI知识推理",
-        "ai_websearch":  "AI联网搜索",
-        "ai_fallback":   "AI知识兜底",
-    }
+    source_label = SOURCE_LABEL
     source_text = ", ".join(
         f"{source_label.get(k, k)} {v}项" for k, v in source_counts.items() if v
     )

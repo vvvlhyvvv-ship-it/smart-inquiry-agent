@@ -1,5 +1,5 @@
 """
-extract/extractor.py — LLM 调用封装（v5.0 精简版）
+extract/extractor.py — LLM 调用封装（V5.2 精简版）
 
 v5.0 仅保留 call_llm（OpenAI 兼容接口）。
 v4.0 的 extract_prices / call_llm_vision 等爬虫相关函数已删除。

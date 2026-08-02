@@ -25,6 +25,9 @@ class SupplierInfo:
     convert_note: str = ""      # 换算过程备注（如"10元/块 ÷ 0.8m ÷ 0.8m = 15.63元/m²"）
     # P0-14: 产品规格详情（广材网返回的完整规格串，用于换算尺寸解析）
     spec_detail: str = ""
+    # 核实价（人工回填，供应商级——同材料不同供应商各有自己的核实价）
+    verified_price: Optional[float] = None
+    verified_note: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -38,6 +41,8 @@ class SupplierInfo:
             "unit_original": self.unit_original,
             "convert_note": self.convert_note,
             "spec_detail": self.spec_detail,
+            "verified_price": self.verified_price,
+            "verified_note": self.verified_note,
         }
 
 
@@ -63,17 +68,6 @@ class SearchResult:
         """创建失败结果"""
         return cls(source="failed", keyword=keyword, error_message=reason)
 
-    @classmethod
-    def ai_fallback(cls, keyword: str, spec: str = "") -> "SearchResult":
-        """创建 AI 推理降级结果"""
-        return cls(
-            source="ai_fallback",
-            keyword=keyword,
-            spec=spec,
-            suppliers=[],
-            error_message="所有平台均搜索失败，请人工确认价格",
-        )
-
     def to_dict(self) -> dict:
         return {
             "source": self.source,
@@ -89,17 +83,12 @@ class SearchResult:
 
 
 # ============================================================
-# 材料路由规则（v5.2：1688 已移除，广材网SSR + AI推理）
+# 数据来源标签映射（统一常量，供 main.py / report.py 引用）
 # ============================================================
-
-# 数据源优先级
-PLATFORM_PRIORITY = [
-    "gldjc_ssr",        # ① 广材网 SSR（精确价+电话）
-    "ai_knowledge",     # ② AI 知识推理（Agnes 主力）
-    "ai_websearch",     # ③ DeepSeek 联网（可选）
-]
-
-
-def get_fallback_chain() -> list:
-    """返回降级链（v5.2：统一链路，不再按平台分）"""
-    return PLATFORM_PRIORITY
+SOURCE_LABEL = {
+    "gldjc_ssr":     "广材网",
+    "ai_knowledge":  "AI知识推理",
+    "ai_websearch":  "AI联网搜索",
+    "ai_fallback":   "AI知识兜底",
+    "verified":      "人工核实",
+}

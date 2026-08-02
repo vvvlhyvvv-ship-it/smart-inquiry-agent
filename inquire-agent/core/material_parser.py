@@ -19,12 +19,18 @@ TEMPLATE_COLUMNS = [
 ]
 
 
-def get_column_names(file_path: str) -> List[str]:
-    """获取 Excel 文件第一行的列名"""
+def get_column_names(file_path: str, with_row_count: bool = False):
+    """获取 Excel 文件第一行的列名。
+
+    with_row_count=True 时返回 (headers, row_count)，row_count 为数据行数（去表头）。
+    """
     wb = openpyxl.load_workbook(file_path)
     ws = wb.active
     headers = [str(cell.value) if cell.value else f"(空列{chr(65+i)})" for i, cell in enumerate(ws[1])]
+    row_count = ws.max_row - 1 if ws.max_row > 0 else 0
     wb.close()
+    if with_row_count:
+        return headers, row_count
     return headers
 
 

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>历史价格 — 智能询价助手 V5.2</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Microsoft YaHei', -apple-system, sans-serif; background: #f0f2f5; color: #1d2b3a; }
+.header {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff; padding: 20px 30px;
+  display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;
+}
+.header h1 { font-size: 22px; font-weight: 700; }
+.header .sub { font-size: 13px; opacity: .9; margin-top: 4px; }
+.header .actions { display: flex; gap: 10px; }
+.btn {
+  padding: 8px 18px; border: none; border-radius: 6px; cursor: pointer;
+  font-size: 14px; font-family: inherit; transition: all .15s; text-decoration: none; display: inline-block;
+}
+.btn-back { background: rgba(255,255,255,.2); color: #fff; }
+.btn-back:hover { background: rgba(255,255,255,.3); }
+.btn-primary { background: #667eea; color: #fff; }
+.btn-primary:hover { background: #5a6fd8; }
+
+.container { max-width: 1200px; margin: 24px auto; padding: 0 20px; }
+
+/* 筛选栏 */
+.filters {
+  background: #fff; border-radius: 10px; padding: 16px 20px; margin-bottom: 20px;
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,.06);
+}
+.filters label { font-size: 13px; color: #555; display: flex; align-items: center; gap: 6px; }
+.filters input, .filters select {
+  padding: 6px 10px; border: 1px solid #d0d7de; border-radius: 5px;
+  font-size: 13px; font-family: inherit; width: 140px;
+}
+.filters input:focus, .filters select:focus { outline: none; border-color: #667eea; }
+.stats {
+  background: #fff; border-radius: 10px; padding: 16px 20px; margin-bottom: 20px;
+  display: flex; gap: 30px; flex-wrap: wrap;
+  box-shadow: 0 1px 3px rgba(0,0,0,.06);
+}
+.stats .stat .label { font-size: 12px; color: #888; }
+.stats .stat .value { font-size: 20px; font-weight: 700; color: #667eea; margin-top: 4px; }
+
+/* 表格 */
+table {
+  width: 100%; border-collapse: collapse; background: #fff;
+  border-radius: 10px; overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0,0,0,.06);
+}
+th, td { padding: 11px 14px; text-align: left; border-bottom: 1px solid #eef0f3; font-size: 13px; }
+th { background: #f8f9fb; font-weight: 600; color: #555; font-size: 12px; }
+tr:hover { background: #fafbff; }
+.price { color: #16a34a; font-weight: 600; }
+.conf-high { color: #16a34a; }
+.conf-medium { color: #d97706; }
+.conf-low { color: #dc2626; }
+.conf-tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #f0f2f5; }
+.conf-high.conf-tag { background: #dcfce7; }
+.conf-medium.conf-tag { background: #fef3c7; }
+.conf-low.conf-tag { background: #fee2e2; }
+.empty { text-align: center; padding: 60px 20px; color: #999; }
+.loading { text-align: center; padding: 40px; color: #667eea; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <h1>📊 历史价格记录</h1>
+    <div class="sub">累积的询价核实数据 · 供后续项目参考</div>
+  </div>
+  <div class="actions">
+    <a href="/" class="btn btn-back">← 返回询价首页</a>
+  </div>
+</div>
+
+<div class="container">
+  <div class="filters">
+    <label>材料名 <input type="text" id="fName" placeholder="如：水泥"></label>
+    <label>地区 <input type="text" id="fRegion" placeholder="如：山西"></label>
+    <label>项目类型 <input type="text" id="fType" placeholder="如：市政"></label>
+    <label>起始日期 <input type="date" id="fStart"></label>
+    <label>结束日期 <input type="date" id="fEnd"></label>
+    <button class="btn btn-primary" onclick="loadData()">🔍 查询</button>
+    <button class="btn" style="background:#eef0f3;color:#555;" onclick="clearFilters()">清除</button>
+  </div>
+
+  <div class="stats" id="statsBox" style="display:none;">
+    <div class="stat"><div class="label">记录总数</div><div class="value" id="sCount">0</div></div>
+    <div class="stat"><div class="label">价格区间</div><div class="value" id="sRange">-</div></div>
+    <div class="stat"><div class="label">均价</div><div class="value" id="sAvg">-</div></div>
+  </div>
+
+  <div id="tableBox">
+    <div class="loading">加载中...</div>
+  </div>
+</div>
+
+<script>
+async function loadData() {
+  const params = new URLSearchParams();
+  const name = document.getElementById('fName').value.trim();
+  const region = document.getElementById('fRegion').value.trim();
+  const ptype = document.getElementById('fType').value.trim();
+  const start = document.getElementById('fStart').value;
+  const end = document.getElementById('fEnd').value;
+  if (name) params.append('material_name', name);
+  if (region) params.append('region', region);
+  if (ptype) params.append('project_type', ptype);
+  if (start) params.append('start_date', start);
+  if (end) params.append('end_date', end);
+
+  document.getElementById('tableBox').innerHTML = '<div class="loading">加载中...</div>';
+  try {
+    const res = await fetch('/api/history/prices?' + params.toString());
+    const data = await res.json();
+    renderTable(data.records || []);
+    renderStats(data.records || []);
+  } catch (e) {
+    document.getElementById('tableBox').innerHTML = '<div class="empty">加载失败：' + e.message + '</div>';
+  }
+}
+
+function renderStats(records) {
+  const box = document.getElementById('statsBox');
+  if (!records.length) { box.style.display = 'none'; return; }
+  box.style.display = 'flex';
+  const prices = records.map(r => r.price).filter(p => p > 0);
+  document.getElementById('sCount').textContent = records.length;
+  document.getElementById('sRange').textContent = prices.length
+    ? `¥${Math.min(...prices)} ~ ¥${Math.max(...prices)}` : '-';
+  document.getElementById('sAvg').textContent = prices.length
+    ? '¥' + (prices.reduce((a,b)=>a+b,0)/prices.length).toFixed(2) : '-';
+}
+
+const SOURCE_LABEL = {
+  gldjc_ssr: '广材网', ai_knowledge: 'AI知识推理', ai_websearch: 'AI联网搜索',
+  ai_fallback: 'AI知识兜底', verified: '人工核实',
+};
+
+function renderTable(records) {
+  const box = document.getElementById('tableBox');
+  if (!records.length) {
+    box.innerHTML = '<div class="empty">📭 暂无历史价格记录<br><br>完成询价并回填核实后，数据会自动累积到这里。</div>';
+    return;
+  }
+  let html = `<table>
+    <tr>
+      <th>日期</th><th>材料名称</th><th>规格</th><th>供应商</th>
+      <th>核实价</th><th>单位</th><th>置信度</th><th>来源</th><th>地区</th>
+    </tr>`;
+  for (const r of records) {
+    const conf = r.confidence || '';
+    const confClass = conf === 'high' ? 'conf-high' : conf === 'medium' ? 'conf-medium' : 'conf-low';
+    const confText = conf === 'high' ? '高' : conf === 'medium' ? '中' : '低';
+    const source = SOURCE_LABEL[r.source_platform] || r.source_platform || '-';
+    html += `<tr>
+      <td>${(r.inquiry_date || '').slice(0,10)}</td>
+      <td>${r.material_name || ''}</td>
+      <td>${r.material_spec || '-'}</td>
+      <td>${r.supplier || '-'}</td>
+      <td class="price">${r.price > 0 ? '¥' + r.price : '-'}</td>
+      <td>${r.price_unit || r.material_unit || '-'}</td>
+      <td>${conf ? `<span class="conf-tag ${confClass}">${confText}</span>` : '-'}</td>
+      <td>${source}</td>
+      <td>${r.region || '-'}</td>
+    </tr>`;
+  }
+  html += '</table>';
+  box.innerHTML = html;
+}
+
+function clearFilters() {
+  ['fName','fRegion','fType','fStart','fEnd'].forEach(id => document.getElementById(id).value = '');
+  loadData();
+}
+
+// 进入页面自动加载
+loadData();
+</script>
+</body>
+</html>

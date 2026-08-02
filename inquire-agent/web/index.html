@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智能询价 Agent v5.0</title>
+<title>智能询价助手 V5.2</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -147,7 +147,7 @@ input:checked + .slider:before { transform: translateX(20px); }
 <body>
 <div class="container">
   <div class="header">
-    <h1>智能询价 Agent <span class="badge">v5.0</span></h1>
+    <h1>智能询价助手 <span class="badge">V5.2</span></h1>
     <div class="subtitle">AI知识推理 + 联网搜索 · 造价工程师的AI询价决策助手 · <a href="/admin.html" style="color:#fff;text-decoration:underline;">⚙️ 管理员</a></div>
   </div>
 
@@ -232,6 +232,7 @@ input:checked + .slider:before { transform: translateX(20px); }
       </div>
     </details>
     <div class="actions">
+      <a href="/history.html" class="btn-secondary btn" style="text-decoration:none;">📊 历史价格</a>
       <button class="btn-secondary btn" onclick="downloadTemplate()">📋 下载模板</button>
       <button class="btn" id="btnToMapping" disabled onclick="goStep(2)">下一步：列映射 →</button>
     </div>
@@ -296,6 +297,10 @@ input:checked + .slider:before { transform: translateX(20px); }
       <button class="btn" onclick="downloadReport('draft')">📥 下载草稿报告（行情参考价）</button>
       <button class="btn btn-success" id="btnVerify" onclick="submitVerify()">📝 回填核实价并生成正式报告</button>
       <button class="btn btn-secondary" id="btnFormalDownload" disabled onclick="downloadReport('formal')">📥 下载正式报告</button>
+    </div>
+    <div class="actions" style="margin-top:12px;border-top:1px dashed #e0e0e0;padding-top:14px;">
+      <button class="btn" style="background:#16a34a;color:#fff;" onclick="startNewInquiry()">🔄 开始新询价</button>
+      <a href="/history.html" class="btn" style="background:#667eea;color:#fff;text-decoration:none;">📊 查看历史价格</a>
     </div>
   </div>
 </div>
@@ -543,25 +548,34 @@ function loadVerifyTable() {
     return;
   }
   let html = `
-    <div style="margin:12px 0;font-size:13px;color:#667;">
-      💡 下方为AI返回的供应商及联系电话。请电话核实后，在「核实成交价」列填入真实价格，系统会更新报告并积累到历史数据库。
+    <div style="margin:12px 0;font-size:13px;color:#667;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+      <span>💡 下方为AI返回的供应商及联系电话。请电话核实后，在「核实成交价」列填入真实价格，系统会更新报告并积累到历史数据库。</span>
+      <button class="btn" style="font-size:13px;padding:6px 14px;background:#667eea;color:#fff;border:none;border-radius:6px;cursor:pointer;" onclick="autoFillVerify()">✅ 一键回填（按AI建议价）</button>
     </div>
     <table class="verify-table" id="verifyTable">
-      <tr><th>材料名称</th><th>供应商</th><th>联系电话</th><th>AI建议价</th><th>核实成交价</th><th>备注</th></tr>
+      <tr><th>序号</th><th>材料名称</th><th>规格</th><th>供应商</th><th>联系电话</th><th>AI建议价</th><th>核实成交价</th><th>备注</th></tr>
   `;
+  let seq = 0;
   for (const item of items) {
     if (!item.suppliers || !item.suppliers.length) {
-      html += `<tr><td>${item.name}</td><td colspan="5" style="color:#dc3545;">⚠️ ${item.error || '询价失败'}</td></tr>`;
+      seq += 1;
+      html += `<tr><td>${seq}</td><td>${item.name}</td><td>${item.spec || ''}</td><td colspan="5" style="color:#dc3545;">⚠️ ${item.error || '询价失败'}</td></tr>`;
       continue;
     }
-    for (const s of item.suppliers) {
-      const sid = `${item.name}__${s.name}`;
+    seq += 1;
+    const rowspan = item.suppliers.length;
+    // 同材料的「序号/材料名称/规格」跨行合并（与草稿报告表格结构一致）
+    for (let i = 0; i < item.suppliers.length; i++) {
+      const s = item.suppliers[i];
+      const mergeAttrs = i === 0
+        ? `<td rowspan="${rowspan}" style="vertical-align:middle;text-align:center;">${seq}</td><td rowspan="${rowspan}" style="vertical-align:middle;font-weight:600;">${item.name}</td><td rowspan="${rowspan}" style="vertical-align:middle;color:#667;">${item.spec || ''}</td>`
+        : '';
       html += `<tr>
-        <td>${item.name}</td>
+        ${mergeAttrs}
         <td>${s.name}</td>
         <td>${s.phone ? `<a href="tel:${s.phone}" style="color:#667eea;">${s.phone}</a>` : '<span style="color:#999;">未提供</span>'}</td>
         <td style="color:#667;">¥${s.price}/${s.unit}</td>
-        <td><input type="number" class="v-price" data-name="${item.name}" data-supplier="${s.name}" data-phone="${s.phone}" placeholder="核实价" style="width:90px;"></td>
+        <td><input type="number" class="v-price" data-name="${item.name}" data-supplier="${s.name}" data-phone="${s.phone}" data-price="${s.price}" placeholder="核实价" style="width:90px;"></td>
         <td><input type="text" class="v-note" data-name="${item.name}" data-supplier="${s.name}" placeholder="备注" style="width:120px;"></td>
       </tr>`;
     }
@@ -573,6 +587,25 @@ function loadVerifyTable() {
 
 function addVerifyRow() {
   // 已废弃，保留空函数避免报错
+}
+
+function autoFillVerify() {
+  // 一键回填：把每行的 AI 建议价自动填入「核实成交价」输入框
+  // 适用于用户已电话确认、认可全部 AI 建议价的场景，免去逐行手输
+  // 注：建议价直接从 input 的 data-price 取，不依赖表格列序号（rowspan 合并后列序号会错乱）
+  let filled = 0;
+  document.querySelectorAll('.v-price').forEach(inp => {
+    const price = inp.dataset.price;
+    if (price) {
+      inp.value = price;
+      filled++;
+    }
+  });
+  if (filled > 0) {
+    alert(`已回填 ${filled} 条 AI 建议价。\n\n如需调整某条价格，可直接修改对应输入框；确认无误后点「回填核实价并生成正式报告」。`);
+  } else {
+    alert('未找到可回填的 AI 建议价');
+  }
 }
 
 async function submitVerify() {
@@ -609,6 +642,16 @@ async function submitVerify() {
 function downloadReport(type) {
   if (!currentTaskId) { alert('暂无任务'); return; }
   window.location.href = `/api/download/${currentTaskId}?report_type=${type}`;
+}
+
+function startNewInquiry() {
+  // 重置状态回主界面（step-1），清空上一轮数据避免干扰
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  currentTaskId = null;
+  currentResults = null;
+  currentFileId = null;
+  document.getElementById('btnFormalDownload').disabled = true;
+  goStep(1);
 }
 </script>
 </body>

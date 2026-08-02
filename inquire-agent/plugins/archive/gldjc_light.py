@@ -1,5 +1,8 @@
 """
 plugins/gldjc.py — 广材网搜索插件
+
+⚠️ 已由 gldjc_ssr.py 替代（V5.2 起，Playwright + __NUXT__ SSR 方案）。
+本文件为归档保留，如需启用需适配 V5.2 数据结构（SearchResult/Supplier 字段已变更）。
 """
 
 import base64
